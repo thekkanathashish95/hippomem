@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Brain-inspired persistent memory layer for AI applications"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "Ashish Mathew", email = "thekkanathashish95@gmail.com" },
 ]
@@ -16,7 +16,6 @@ keywords = ["llm", "memory", "ai", "chatbot", "agent", "rag"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
