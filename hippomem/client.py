@@ -18,7 +18,7 @@ Usage::
     finally:
         await mem.aclose()
 
-Requires: pip install hippomem[server]  (includes httpx)
+Requires: pip install hippomem
 """
 from typing import Optional
 
@@ -34,7 +34,7 @@ def _get_httpx():
     except ImportError:
         raise ImportError(
             "httpx is required for HippoMemClient. "
-            "Install it with: pip install hippomem[server]"
+            "Install it with: pip install hippomem"
         ) from None
 
 

@@ -5,7 +5,7 @@ Canonical server is hippomem.server.app (used by `hippomem serve`). This file is
 kept as a standalone reference for development.
 
 Usage:
-    pip install ".[server]"          # from hippomem root
+    pip install "."                  # from hippomem root
     cp .env.example .env             # fill in your API key
     python examples/chat_server.py   # starts on http://localhost:8000
 

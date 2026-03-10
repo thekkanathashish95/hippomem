@@ -25,12 +25,6 @@ await memory.encode(user_id, message, response, context)  # store what happened
 pip install hippomem
 ```
 
-**With daemon + Studio UI** — run hippomem as a local service:
-
-```bash
-pip install hippomem[server]
-```
-
 Requires Python 3.11+.
 
 ---
@@ -103,7 +97,7 @@ async with HippoMemClient("http://localhost:8719") as mem:
     await mem.encode("user_123", user_message, response, decode_result=result)
 ```
 
-`HippoMemClient` requires `pip install hippomem[server]` (includes httpx).
+`HippoMemClient` is included in the standard `pip install hippomem`.
 
 ---
 
@@ -154,8 +148,8 @@ memory = MemoryService(llm_api_key="sk-...", llm_base_url="...", config=config)
 | Mode | Install | How |
 |------|---------|-----|
 | **Library** | `pip install hippomem` | `from hippomem import MemoryService` — runs in your process |
-| **Daemon** | `pip install hippomem[server]` | `hippomem serve` — standalone service + Studio UI |
-| **Client** | `pip install hippomem[server]` | `from hippomem.client import HippoMemClient` — connects to daemon over HTTP |
+| **Daemon** | `pip install hippomem` | `hippomem serve` — standalone service + Studio UI |
+| **Client** | `pip install hippomem` | `from hippomem.client import HippoMemClient` — connects to daemon over HTTP |
 
 ---
 
