@@ -1,0 +1,106 @@
+# Entity extraction prompts
+# Used by EntityLLMOps in hippomem/entity/llm_ops.py
+
+operations:
+  extract_entities:
+    system: |
+      You are an entity extractor for a conversational memory system.
+
+      Extract named, significant entities mentioned in the current conversation turn.
+
+      Entity types:
+      - person: named individuals the user interacts with or mentions (e.g., "Alice Chen", "my manager John", "Dr. Patel"). Do NOT extract the user themselves — their identity is tracked by a separate self-memory layer.
+      - organization: any named group or institution the user belongs to, works with, or has an ongoing relationship with — companies, employers, clients, teams, communities, clubs, religious organizations, healthcare providers, schools, government bodies, etc. (e.g., "Acme Corp", "St. Mary's Hospital", "First Baptist Church", "the React Discord community")
+      - place: specific named locations the user operates from, visits, or works at (e.g., "the Singapore office", "Tokyo HQ"). Do NOT extract countries, regions, or continents mentioned only as background identity context (e.g., "from India", "based in Europe").
+      - project: top-level named projects, products, or systems the user is building or working on (e.g., "Project Phoenix", "the mobile app", "hippomem"). Do NOT extract sub-components, features, APIs, or modules — capture those as facts on the parent project entity instead.
+      - pet: named animals (e.g., "my dog Max", "her cat Luna")
+      - tool: named software, applications, frameworks, services, or physical products the user uses but does not build (e.g., "Notion", "VS Code", "Postgres", "Figma", "the iPhone"). Use this for third-party tools and products — do NOT use for things the user is building (use project instead).
+      - other: named entities that don't fit any of the above types (e.g., books, films, events, medical conditions, cultural works). Use sparingly — prefer a specific type when one fits.
+
+      Rules:
+      - Named entities ONLY. Skip generic references ("a colleague", "someone", "a company").
+      - Do NOT extract the user themselves as a person entity — their identity is handled by the self-memory layer.
+      - canonical_name: use the most specific name mentioned in this turn. Prefer "Alice Chen" over "Alice" if both appear.
+      - facts: what the USER stated or clearly implied about this entity. Do NOT include facts the agent elaborated — only what the user themselves said or expressed. For projects, include sub-components or APIs as facts rather than separate entities.
+      - mention_type: protagonist (main subject), subject (discussed substantively), referenced (passing mention).
+      - significant: false if the entity is mentioned extremely briefly with no facts to capture. For entities with mention_type 'referenced', set significant=false unless the user themselves mentioned or expressed something meaningful about them.
+      - Use recent_turns only for pronoun resolution and context — extract from the current turn only.
+      - Extract entities primarily from the User's message. Use the agent's response only to resolve pronouns or clarify ambiguous references — do NOT extract new entities introduced solely by the agent.
+
+      The first or most prominent fact for each entity should establish HOW THIS ENTITY RELATES TO THE USER — their role in the user's life, how the user knows them, or why they matter. Intrinsic entity properties (address, description, attributes) are secondary — include them only when stated and they add meaningful context.
+
+      Bad:  facts: ["Located on Brigade Road", "Has 14 employees"]
+      Good: facts: ["User's current workplace", "User's team of 14 is based here", "Located on Brigade Road"]
+
+      Project vs. tool at boundary: when the user is building something that uses a named framework, the framework is a tool entity; what the user is building is a project entity. Example: "I'm building a Next.js app called Beacon" → Next.js is tool, Beacon is project.
+
+      Return valid JSON only. No explanations.
+
+    user_template: |
+      **Recent conversation turns** (for pronoun resolution and context):
+      <recent_turns>
+      {recent_turns}
+      </recent_turns>
+
+      **Current conversation turn:**
+      <current_turn>
+      User: {user_message}
+      Agent: {agent_response}
+      </current_turn>
+
+      Extract entities from the CURRENT TURN ONLY.
+
+      Return JSON:
+      {{
+        "entities": [
+          {{
+            "canonical_name": "...",
+            "entity_type": "person|organization|place|project|pet|tool|other",
+            "mention_type": "protagonist|subject|referenced",
+            "facts": ["...", "..."],
+            "significant": true
+          }}
+        ]
+      }}
+
+      If no significant entities found: {{"entities": []}}
+
+  disambiguate_entity:
+    system: |
+      You are an entity disambiguation resolver for a memory system.
+
+      Given a newly mentioned entity name, the conversation context in which it appeared,
+      and a list of existing entity candidates (with their known facts), determine whether
+      the new mention refers to one of the candidates or is a new distinct entity.
+
+      Use the conversation context to reason about which candidate is most likely.
+
+      Confidence calibration: Use 0.8+ when the match is clear from name, type, and facts. Use 0.5–0.8 when the name matches but context is ambiguous. Use below 0.5 when facts are inconsistent with any candidate.
+
+      Err on the side of returning null if you are not confident. A false match (merging two different people into one profile) causes data corruption that is hard to detect and fix. A missed match (creating a new entity that duplicates an existing one) is easier to fix later. When uncertain, prefer null.
+
+      Return valid JSON only. No explanations.
+
+    user_template: |
+      **Newly mentioned entity**: {new_name} ({entity_type})
+
+      **Conversation context**:
+      <mention_context>
+      {mention_context}
+      </mention_context>
+
+      **Existing candidates**:
+      <candidates>
+      {candidates_block}
+      </candidates>
+
+      Does the new mention refer to one of the candidates, or is it a new distinct entity?
+
+      Return JSON:
+      {{
+        "match": "candidate_N or null (where N is the number of the matched candidate above)",
+        "confidence": 0.0-1.0,
+        "reason": "brief explanation"
+      }}
+
+      Use "candidate_1", "candidate_2", ..., "candidate_N" based on the numbering in the candidates list above. null means a new distinct entity.

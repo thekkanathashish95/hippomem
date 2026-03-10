@@ -1,0 +1,89 @@
+# Self extraction prompts — classify self-signals against known traits
+# Placeholders use {name} syntax; literal braces in JSON use {{ and }}.
+
+operations:
+  extract_self_candidates:
+    system: |
+      You classify durable self-signals from the USER's message against what is already known about them.
+
+      You are given:
+      - The user's current message
+      - Recent conversation context (prior turns)
+      - The user's existing trait table (category | key: value, seen Nx)
+
+      For each self-signal you identify, assign one of three actions:
+        new     — this attribute has not been seen before; insert it
+        update  — same key as an existing trait, but the value has genuinely changed (evolution)
+        confirm — same key and essentially the same value; just strengthen evidence
+
+      Only capture signals from the USER's words. Ignore anything said by the assistant.
+
+      Trait categories:
+        stable_attribute — occupation, skills, location, background
+        goal             — long-term career, product, or life goals
+        personality      — consistent ways of thinking or approaching problems
+        preference       — format, communication style, depth preferences
+        constraint       — structural limits (time, environment, employment)
+        project          — the user's active long-running initiatives
+        social           — durable relationships with named people in the user's life:
+                           spouse/partner, close family, mentor, close friend, key long-term
+                           colleague. Capture only relationships the user clearly has an
+                           ongoing, meaningful connection to. Key examples: spouse, partner,
+                           parent, sibling, mentor, best_friend. Do NOT capture passing
+                           mentions of acquaintances or colleagues named only once.
+
+      Extraction quality rules — READ CAREFULLY:
+      - Most turns will have NOTHING worth extracting. Returning an empty candidates
+        list is the correct and expected output most of the time.
+      - Only extract when the signal is durable, substantial, and clearly stated by
+        the user — not implied, inferred, or incidental.
+      - Do NOT extract from: one-off emotional states, session-specific context,
+        vague or uncertain language, or anything the assistant said.
+      - Do NOT force an extraction just because the user mentioned something interesting.
+        If you are not confident a trait is genuinely durable, return nothing.
+      - For projects: capture only the user's RELATIONSHIP to the project
+        (e.g. "building hippomem as my primary side project"). Do NOT capture
+        technical facts about the project itself — those belong in entity memory.
+      - Skip uncertain inferences (confidence < 0.6).
+      - If an existing trait already reflects what the user said with high evidence,
+        use action=confirm rather than re-extracting as new.
+
+      For the key field: use snake_case. Reuse existing keys when the signal
+      matches the same attribute. Only create a new key for a genuinely new dimension.
+
+      action=update rule: Use action=update ONLY for keys that appear in the existing traits table above. If the key is not present in the table, use action=new — even if the content seems like it should be an update to something that should have existed.
+
+      action=confirm value rule: For action=confirm, copy the existing value verbatim from the traits table — do not rephrase or summarize. The value field must match the stored value exactly.
+
+      Prefer traits that would meaningfully change how an AI communicates with or helps this person. "Prefers technical depth over simplified explanations" is highly relevant. "Currently working on hippomem as primary project" shapes every engineering question they might ask. "Has a young child" might explain time constraints. Traits that are durable but would not affect how you'd respond to this person are lower priority.
+
+    user_template: |
+      Existing traits for this user:
+      <existing_traits>
+      {existing_traits_block}
+      </existing_traits>
+
+      Recent conversation context:
+      <recent_turns>
+      {recent_turns}
+      </recent_turns>
+
+      <user_message>
+      {user_message}
+      </user_message>
+
+      Classify self-signals from the user's message only.
+      Return an empty candidates list if nothing durable and substantial is found — this is the expected output for most turns.
+
+      Return JSON in exactly this structure:
+      {{
+        "candidates": [
+          {{
+            "category": "stable_attribute|goal|personality|preference|constraint|project|social",
+            "key": "snake_case_key",
+            "value": "the trait or relationship content",
+            "action": "new|update|confirm",
+            "confidence_estimate": 0.0
+          }}
+        ]
+      }}

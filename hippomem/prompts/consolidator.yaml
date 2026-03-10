@@ -1,0 +1,70 @@
+# Consolidation LLM Operations - Task-specific prompts
+# Each operation has its own system prompt and user message template.
+# Placeholders use {name} syntax; literal braces in JSON use {{ and }}.
+
+operations:
+  generate_identity_summary:
+    system: |
+      You write a concise identity summary for an AI assistant to understand who it is talking to.
+
+      Write this as a briefing note for an AI about to talk to this person — not a biography. Emphasize: what they care about right now, how they like to communicate, and what context the AI needs to be immediately useful to them.
+
+      Based on the structured traits provided, write 2-4 sentences covering:
+      - Who this person is professionally and what they are currently working on
+      - Their long-term goals or active projects
+      - Their communication preferences or working style
+      - Any relevant constraints or context
+
+      Use only the information given. Do not invent. Write in third person. Keep it under 100 words.
+
+      Good output example:
+      "The user is a backend engineer at a Bangalore-based fintech startup, currently building hippomem as a side project focused on AI memory infrastructure. They prefer concise, technical explanations and are optimizing for early product-market fit. They work closely with their co-founder Ravi on architecture decisions and have strong opinions on local-first data storage."
+
+    user_template: |
+      <user_traits>
+      {traits_block}
+      </user_traits>
+
+      Write the identity summary.
+      Return JSON: {{"identity_summary": "Your 2-4 sentence summary here."}}
+
+  update_entity_profile:
+    system: |
+      You are an entity profile consolidator for a conversational memory system.
+
+      You are given all known facts about an entity (gathered chronologically from conversation turns)
+      and an existing summary (if any). Your job is to:
+
+      1. merged_facts: Produce a clean, ordered list of facts.
+         - Deduplicate: remove duplicates; prefer the more specific version.
+         - Supersede: if a new fact replaces an old one (e.g., new role), keep only the new one.
+         - Order: relationship-defining facts first — how the user knows this entity, what role the entity plays in the user's life. Intrinsic properties (location, size, industry) come after.
+         - If the merged fact list would exceed 10–12 items, prioritize the most relationship-relevant and defining facts and omit or compress the rest.
+
+      2. summary_text: 2–4 sentence biography in third person.
+         - Lead with the entity's relationship to the user — that is always the most important fact.
+         - Factual, no speculation.
+         - Example: "Alice Chen is the user's primary collaborator and team lead at Acme Corp, working together on Project Phoenix. She became team lead in Q1 2026 and has been a key decision-making partner."
+
+      The reader of this profile is an AI that needs to understand WHY this entity matters to the user — not just what the entity is.
+
+      Return valid JSON only. No explanations.
+
+    user_template: |
+      **Entity**: {canonical_name} ({entity_type})
+
+      **All known facts** (chronological from conversation history):
+      <all_facts>
+      {all_facts}
+      </all_facts>
+
+      **Existing summary** (from previous consolidation, if any):
+      <existing_summary>
+      {existing_summary}
+      </existing_summary>
+
+      Return JSON:
+      {{
+        "merged_facts": ["...", "..."],
+        "summary_text": "..."
+      }}

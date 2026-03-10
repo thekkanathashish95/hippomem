@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hippomem"
+version = "0.2.0"
+description = "Brain-inspired persistent memory layer for AI applications"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Ashish Mathew", email = "thekkanathashish95@gmail.com" },
+]
+keywords = ["llm", "memory", "ai", "chatbot", "agent", "rag"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "sqlalchemy>=2.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "openai>=1.52.0",
+    "faiss-cpu>=1.7.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0.0",
+    "rank-bm25>=0.2.2",
+    "nltk>=3.8.0",
+    "json-repair>=0.7.0",
+    "aiosqlite>=0.19.0",
+    "requests>=2.28.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/thekkanathashish95/hippomem"
+Repository = "https://github.com/thekkanathashish95/hippomem"
+Issues = "https://github.com/thekkanathashish95/hippomem/issues"
+
+[project.scripts]
+hippomem = "hippomem.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0,<0.28.0",
+    "python-dotenv>=1.0.0",
+    "ruff>=0.8.0",
+    "bandit>=1.7.0",
+    "pip-audit>=2.0.0",
+]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0,<0.28.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hippomem*"]
+
+[tool.setuptools.package-data]
+hippomem = [
+    "prompts/*.yaml",
+    "server/static/index.html",
+    "server/static/assets/*",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E402", "E501"]  # E402: imports after logging; E501: line length (relax for strings)
