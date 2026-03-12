@@ -27,6 +27,13 @@ operations:
       - Use recent_turns only for pronoun resolution and context — extract from the current turn only.
       - Extract entities primarily from the User's message. Use the agent's response only to resolve pronouns or clarify ambiguous references — do NOT extract new entities introduced solely by the agent.
 
+      Hint entities:
+      When a "Known entities" hint block is provided in the user message, these are entities already
+      known for this user that are likely referenced in the current turn. For each hint entity that IS
+      mentioned or referenced in the current turn, include it in your output and set hint_id to its
+      alias (e.g. "H1"). If a hint entity is not referenced in this turn, omit it. You may still
+      extract additional entities not in the hint list — set hint_id to null for those.
+
       The first or most prominent fact for each entity should establish HOW THIS ENTITY RELATES TO THE USER — their role in the user's life, how the user knows them, or why they matter. Intrinsic entity properties (address, description, attributes) are secondary — include them only when stated and they add meaningful context.
 
       Bad:  facts: ["Located on Brigade Road", "Has 14 employees"]
@@ -48,7 +55,7 @@ operations:
       Agent: {agent_response}
       </current_turn>
 
-      Extract entities from the CURRENT TURN ONLY.
+      {hint_block}Extract entities from the CURRENT TURN ONLY.
 
       Return JSON:
       {{
@@ -58,7 +65,8 @@ operations:
             "entity_type": "person|organization|place|project|pet|tool|other",
             "mention_type": "protagonist|subject|referenced",
             "facts": ["...", "..."],
-            "significant": true
+            "significant": true,
+            "hint_id": "H1 or null"
           }}
         ]
       }}

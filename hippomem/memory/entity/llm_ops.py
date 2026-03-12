@@ -23,6 +23,7 @@ class EntityLLMOps:
         user_message: str,
         agent_response: str,
         recent_turns: str,
+        hint_block: str = "",
     ) -> EntityExtractionResult:
         """Extract named entities from the current turn."""
         prompts = get_entity_prompts("extract_entities")
@@ -30,6 +31,7 @@ class EntityLLMOps:
             recent_turns=recent_turns or "(none)",
             user_message=user_message,
             agent_response=agent_response,
+            hint_block=hint_block,
         )
         messages = [
             {"role": "system", "content": prompts["system"]},

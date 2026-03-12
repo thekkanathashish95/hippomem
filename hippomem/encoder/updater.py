@@ -34,6 +34,25 @@ from hippomem.decoder.context_builder import format_recent_turns
 logger = logging.getLogger(__name__)
 
 
+def _truncate_facts(facts: List[str], max_chars: int = 3000, max_fact_chars: int = 300) -> str:
+    """
+    Join facts into a preview string.
+    Each individual fact is truncated to max_fact_chars (with '...').
+    Stops adding facts once the total would exceed max_chars.
+    """
+    if not facts:
+        return "no prior facts"
+    parts: List[str] = []
+    total = 0
+    for fact in facts:
+        truncated = fact if len(fact) <= max_fact_chars else fact[:max_fact_chars - 3] + "..."
+        if total and total + len(truncated) + 2 > max_chars:
+            break
+        parts.append(truncated)
+        total += len(truncated) + 2  # +2 for "; " separator
+    return "; ".join(parts)
+
+
 def _build_entity_embed_text(canonical_name: str, entity_type: str, facts: List[str]) -> str:
     """Construct embedding text for entity node (no summary_text yet — consolidation adds that)."""
     parts = [f"{canonical_name} ({entity_type})"]
@@ -559,6 +578,37 @@ class MemoryEncoder:
                 dormant.pop()
         return demoted
 
+    def _load_hint_entity_details(
+        self,
+        entity_uuids: Set[str],
+        user_id: str,
+        db: Session,
+    ) -> List[Dict[str, Any]]:
+        """
+        Batch-load name, entity_type, and top facts for a set of entity UUIDs.
+        Returns only entities that exist and have a non-null core_intent.
+        Order matches iteration order of entity_uuids.
+        """
+        rows = (
+            db.query(Engram)
+            .filter(
+                Engram.user_id == user_id,
+                Engram.engram_id.in_(entity_uuids),
+                Engram.engram_kind == EngramKind.ENTITY.value,
+                Engram.core_intent.isnot(None),
+            )
+            .all()
+        )
+        return [
+            {
+                "uuid": row.engram_id,
+                "name": row.core_intent,
+                "entity_type": row.entity_type or "other",
+                "facts": list(row.updates or []),
+            }
+            for row in rows
+        ]
+
     def _extract_and_link_entities(
         self,
         user_id: str,
@@ -576,26 +626,53 @@ class MemoryEncoder:
         In that case, entities are still created/updated but no MENTION link is written
         (there is no episode to link to).
 
-        known_entity_uuids: entity UUIDs already resolved by synthesis this turn — used to skip
-        LLM disambiguation for entities whose identity was already confirmed.
+        known_entity_uuids: entity UUIDs resolved by the decoder this turn — used to build hint
+        anchors (H1, H2, ...) that are injected into the extraction prompt so the LLM can directly
+        identify known entities without requiring post-hoc name matching or disambiguation.
         """
         recent_turns = format_recent_turns(conversation_history, num_turns=self.config.updater_entity_extract_turns)
-        result = self.entity_llm_ops.extract_entities(user_message, agent_response, recent_turns)
+
+        # Build hint map: H-prefix aliases → UUID, and format a hint block for the prompt
+        hint_map: Dict[str, str] = {}
+        hint_block = ""
+        if known_entity_uuids:
+            hint_entities = self._load_hint_entity_details(known_entity_uuids, user_id, db)
+            if hint_entities:
+                lines = []
+                for i, ent in enumerate(hint_entities, 1):
+                    alias = f"H{i}"
+                    hint_map[alias] = ent["uuid"]
+                    facts_preview = _truncate_facts(ent["facts"], max_chars=3000, max_fact_chars=300)
+                    lines.append(f"{alias}: {ent['name']} ({ent['entity_type']}) — {facts_preview}")
+                hint_block = "**Known entities (likely referenced in this turn):**\n" + "\n".join(lines) + "\n\n"
+
+        result = self.entity_llm_ops.extract_entities(
+            user_message, agent_response, recent_turns, hint_block=hint_block
+        )
         significant = [e for e in result.entities if e.significant]
-        logger.info("entity_extract: user=%s episode=%s found=%d significant=%d",
-                    user_id, episode_uuid or "none", len(result.entities), len(significant))
+        logger.info("entity_extract: user=%s episode=%s found=%d significant=%d hints=%d",
+                    user_id, episode_uuid or "none", len(result.entities), len(significant), len(hint_map))
 
         for extracted in result.entities:
             if not extracted.significant:
                 continue
             try:
-                entity_uuid = self._find_or_create_entity(
-                    extracted, user_id, db,
-                    user_message=user_message,
-                    agent_response=agent_response,
-                    recent_turns=recent_turns,
-                    known_entity_uuids=known_entity_uuids or set(),
-                )
+                # Hint anchor: LLM confirmed this is a known entity — skip name scan + disambiguation
+                if extracted.hint_id and extracted.hint_id in hint_map:
+                    resolved_uuid = hint_map[extracted.hint_id]
+                    faiss_svc = FAISSService(base_dir=self.config.vector_dir)
+                    index = faiss_svc.get_or_create_index(user_id)
+                    entity_uuid = self._append_facts_to_entity(
+                        resolved_uuid, extracted, user_id, db, faiss_svc, index
+                    )
+                    logger.debug("entity='%s' match=hint_anchor uuid=%s", extracted.canonical_name, resolved_uuid)
+                else:
+                    entity_uuid = self._find_or_create_entity(
+                        extracted, user_id, db,
+                        user_message=user_message,
+                        agent_response=agent_response,
+                        recent_turns=recent_turns,
+                    )
                 if entity_uuid and episode_uuid:
                     self._link_entity_to_episode(
                         user_id, episode_uuid, entity_uuid, extracted.mention_type, db
@@ -663,17 +740,17 @@ class MemoryEncoder:
         user_message: str = "",
         agent_response: str = "",
         recent_turns: str = "",
-        known_entity_uuids: Optional[Set[str]] = None,
     ) -> Optional[str]:
         """
         Find existing entity node by name or create a new one.
 
+        Only called for entities with no hint_id (new entities not in decoder hints).
+
         Lookup strategy:
           1. Name-based DB scan (exact → substring → token overlap), same entity_type only
           2. Single exact match → auto update (no LLM needed)
-          3. Candidate UUID in known_entity_uuids → skip LLM, auto-select (synthesis hint)
-          4. Any ambiguity (multiple matches, or non-exact) → LLM disambiguate
-          5. No match / LLM returns null → create new
+          3. Any ambiguity (multiple matches, or non-exact) → LLM disambiguate
+          4. No match / LLM returns null → create new
         """
         faiss_svc = FAISSService(base_dir=self.config.vector_dir)
 
@@ -694,20 +771,6 @@ class MemoryEncoder:
             return self._append_facts_to_entity(
                 matched_row.engram_id, extracted, user_id, db, faiss_svc, index
             )
-
-        # Synthesis hint: one candidate was already resolved at decode time → skip LLM
-        if known_entity_uuids:
-            known_candidates = [(tier, row) for tier, row in candidates if row.engram_id in known_entity_uuids]
-            if len(known_candidates) == 1:
-                matched_row = known_candidates[0][1]
-                logger.debug(
-                    "entity='%s' match=synthesis_hint uuid=%s",
-                    extracted.canonical_name, matched_row.engram_id,
-                )
-                index = faiss_svc.get_or_create_index(user_id)
-                return self._append_facts_to_entity(
-                    matched_row.engram_id, extracted, user_id, db, faiss_svc, index
-                )
 
         # Multiple exact matches OR non-exact matches → LLM disambiguate
         candidates_for_llm = [

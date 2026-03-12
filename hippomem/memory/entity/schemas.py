@@ -9,6 +9,7 @@ class ExtractedEntity(BaseModel):
     mention_type: str       # protagonist | subject | referenced
     facts: List[str]
     significant: bool
+    hint_id: Optional[str] = None   # "H1", "H2", ... if matched to a decoder hint; null for new entities
 
 
 class EntityExtractionResult(BaseModel):
