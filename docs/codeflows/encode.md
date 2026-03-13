@@ -261,19 +261,30 @@
 > No MENTION link is written when `episode_uuid` is None.
 
    - 8.1 `recent_turns = format_recent_turns(conversation_history, updater_entity_extract_turns)`
-   - 8.2 **(LLM)** `entity_llm_ops.extract_entities(user_message, agent_response, recent_turns)` [ENT:21]
+   - 8.2 **Build hint map** from `known_entity_uuids` (decoder-resolved entities):
+      - `_load_hint_entity_details(known_entity_uuids, user_id, db)` — batch-queries ENTITY engrams with non-null `core_intent`; returns `[{uuid, name, entity_type, facts}]`
+      - For each result: assigns alias `H1, H2, ...`; populates `hint_map: Dict[str, str]` (`alias → uuid`)
+      - `_truncate_facts(facts, max_chars=3000, max_fact_chars=300)` — each fact capped at 300 chars with `...`; total per entity capped at 3000 chars
+      - Formats `hint_block` string: `"**Known entities (likely referenced in this turn):**\nH1: Alice (person) — fact1; fact2\n..."`
+      - If `known_entity_uuids` is empty or no rows found: `hint_map = {}`, `hint_block = ""`
+   - 8.3 **(LLM)** `entity_llm_ops.extract_entities(user_message, agent_response, recent_turns, hint_block=hint_block)` [ENT:21]
+      - `hint_block` injected into user template via `{hint_block}` placeholder (empty string = no hints, no behavior change)
+      - Each `ExtractedEntity` may include `hint_id: Optional[str]` — `"H1"` if the LLM matched a hint, `None` for new entities
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `EntityExtractionResult(entities=[])` (empty, not None)
-   - 8.3 `significant = [e for e in result.entities if e.significant]`; logs info `entity_extract: user=... episode=... found=N significant=N`
-   - 8.4 Iterates ALL entities; `significant` check is inside the loop (non-significant skipped via `continue`)
-   - 8.5 For each significant entity — entire block in try/except: `db.rollback()` + `logger.error` on failure:
-      - 8.5.1 `_find_or_create_entity(extracted, user_id, db, user_message, agent_response, recent_turns, known_entity_uuids)` — see §8a
-      - 8.5.2 If `entity_uuid and episode_uuid`: `_link_entity_to_episode(user_id, episode_uuid, entity_uuid, mention_type, db)` — see §8b
-      - 8.5.3 `db.commit()` — per-entity commit to release DB lock before next entity's embedding API call
+   - 8.4 Logs info: `entity_extract: user=... episode=... found=N significant=N hints=N`
+   - 8.5 Iterates ALL entities; `significant` check is inside the loop (non-significant skipped via `continue`)
+   - 8.6 For each significant entity — entire block in try/except: `db.rollback()` + `logger.error` on failure:
+      - **Hint anchor branch** (if `extracted.hint_id` is set AND `hint_id in hint_map`):
+         - Resolves UUID directly from `hint_map`; calls `_append_facts_to_entity(resolved_uuid, ...)` — skips name scan and disambiguation entirely
+         - Logs debug: `entity='...' match=hint_anchor uuid=...`
+      - **Normal branch** (hint_id is None or not in map): `_find_or_create_entity(extracted, user_id, db, user_message, agent_response, recent_turns)` — see §8a
+      - 8.6.1 If `entity_uuid and episode_uuid`: `_link_entity_to_episode(user_id, episode_uuid, entity_uuid, mention_type, db)` — see §8b
+      - 8.6.2 `db.commit()` — per-entity commit to release DB lock before next entity's embedding API call
 
 ---
 
 ### 8a. `_find_or_create_entity()` [E:658]
-> Lookup strategy: name scan → exact auto-update → synthesis hint → LLM disambiguation → create.
+> Only called for entities with no hint_id. Lookup strategy: name scan → exact auto-update → LLM disambiguation → create.
 
    - `_find_entity_candidates_by_name(canonical_name, entity_type, user_id, db)` [E:610]:
       - Queries all ENTITY engrams for this user filtered by same `entity_type`
@@ -282,7 +293,6 @@
       - Returns `List[(tier, row)]`
    - **0 candidates** → `_create_entity_node(extracted, user_id, db, faiss_svc)` — see §8d; logs debug `entity='...' match=none → create`
    - **1 exact match** → `_append_facts_to_entity(matched_row.engram_id, ...)` via `get_or_create_index` — logs debug `entity='...' match=exact uuid=...`
-   - **Synthesis hint**: filter candidates to `known_candidates` where `row.engram_id in known_entity_uuids`; if exactly 1 → `_append_facts_to_entity(...)` directly, no LLM call — logs debug `entity='...' match=synthesis_hint uuid=...`
    - **Multiple matches or non-exact only** → build `mention_context` from `recent_turns + user_message + agent_response`; **(LLM)** `entity_llm_ops.disambiguate_entity(new_name, entity_type, mention_context, candidates_for_llm)` [ENT:50]
       - Candidates formatted as `candidate_1: {name}\n  - {fact}...` blocks
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `DisambiguationResult(match=None, confidence=0.0, reason="LLM error")`
