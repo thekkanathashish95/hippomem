@@ -119,8 +119,9 @@ class BM25Retriever:
         corpus_ids: List[str] = []
         for row in rows:
             text = row.core_intent or ""
-            if row.updates:
-                text += " " + " ".join(row.updates)
+            all_facts = (row.updates or []) + (row.pending_facts or [])
+            if all_facts:
+                text += " " + " ".join(all_facts)
             tokens = self._tokenize(text)
             if tokens:
                 documents.append(tokens)

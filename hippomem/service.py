@@ -207,16 +207,18 @@ class MemoryService:
 
     def _setup_sync(self) -> None:
         from pathlib import Path
+        from hippomem.db.migrations import run_migrations
         Path(self.config.db_url.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
         self._engine = create_db_engine(self.config.db_url)
         Base.metadata.create_all(self._engine)
+        run_migrations(self._engine)
         self._session_factory = create_session_factory(self._engine)
 
     def _start_background_consolidation(self) -> None:
         self._bg_consolidation = BackgroundConsolidationTask(
             session_factory=self._session_factory,
-            consolidation_svc=self._get_consolidation_svc(),
             interval_hours=self.config.consolidation_interval_hours,
+            enable_episode_consolidation=self.config.enable_episode_consolidation,
             enable_entity_extraction=self.config.enable_entity_extraction,
             consolidation_llm_ops=ConsolidationLLMOps(self._llm_svc),
             embedding_service=self._emb_svc,
@@ -263,7 +265,8 @@ class MemoryService:
         Run periodic memory maintenance for a user.
 
         Call this at session end, on a schedule, or whenever appropriate.
-        Handles: staleness demotion, entity enrichment, self memory snapshot.
+        Handles: entity enrichment, trait pruning, self memory snapshot.
+        Decay and demotion run in the encoder on each turn.
 
         Args:
             user_id: The user to consolidate.
@@ -285,7 +288,7 @@ class MemoryService:
             consolidate_user(
                 user_id=user_id,
                 db=db,
-                consolidation_svc=self._get_consolidation_svc(),
+                enable_episode_consolidation=self.config.enable_episode_consolidation,
                 enable_entity_extraction=self.config.enable_entity_extraction,
                 consolidation_llm_ops=ConsolidationLLMOps(self._llm_svc),
                 embedding_service=self._emb_svc,

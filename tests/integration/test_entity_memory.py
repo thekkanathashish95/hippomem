@@ -71,7 +71,8 @@ def test_encode_creates_entity_engram_for_new_entity(db, mock_llm, mock_embeddin
     assert entity is not None
     assert entity.core_intent == "Alice"
     assert entity.entity_type == "person"
-    assert "works at Acme" in (entity.updates or [])
+    # encoder writes new facts to pending_facts; updates is the consolidated baseline (empty until consolidation runs)
+    assert "works at Acme" in (entity.pending_facts or [])
 
 
 def test_encode_reuses_existing_entity_above_similarity_threshold(
@@ -147,8 +148,9 @@ def test_encode_reuses_existing_entity_above_similarity_threshold(
         Engram.engram_kind == EngramKind.ENTITY.value,
     ).all()
     assert len(entities) == 1
+    # original fact stays in consolidated updates; new fact goes to pending_facts
     assert "original fact" in (entities[0].updates or [])
-    assert "new fact from second mention" in (entities[0].updates or [])
+    assert "new fact from second mention" in (entities[0].pending_facts or [])
 
 
 def test_encode_creates_mention_link_to_episode(db, mock_embeddings, vector_dir):
@@ -295,7 +297,9 @@ def test_enrich_entity_profiles_generates_summary_text(db, mock_llm, mock_embedd
         engram_kind=EngramKind.ENTITY.value,
         entity_type="person",
         core_intent="Diana",
-        updates=["fact1", "fact2"],
+        updates=["fact1"],
+        pending_facts=["fact2"],
+        needs_consolidation=True,
         summary_text=None,
         relevance_score=1.0,
     )

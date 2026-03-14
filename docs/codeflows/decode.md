@@ -89,6 +89,7 @@
       - **Iterates in working-state order** (not DB row order) so `E1`, `E2`, ... match working state position
       - Skips any uuid not found in query result (e.g. deleted engrams)
       - Each event dict: `{event_id, event_uuid, core_intent, updates, event_kind, entity_type, summary_text}`
+         - `updates` = `(row.updates or []) + (row.pending_facts or [])` — combined consolidated baseline + pending buffer; synthesis always sees the full picture regardless of whether consolidation has run
 
 ---
 
@@ -169,6 +170,7 @@
       - **Composite score**: `score_engram_with_breakdown(sem, relevance_score, last_updated_at, ...)`
       - `source`: `"faiss"` if uuid in `faiss_uuid_to_score`, else `"bm25"`
       - Event dict: `{event_uuid, core_intent, score, source, event_kind, entity_type, summary_text, updates}`
+         - `updates` = `(row.updates or []) + (row.pending_facts or [])` — combined
       - Collect up to `top_k=5` primary events; stop iterating once reached
    - 5.9 **Graph expansion** (if `enable_graph_expansion and graph_hops >= 1 and max_graph_events > 0 and primary_events`):
       - `graph_hops >= 1` acts as on/off guard; actual expansion is always 1 hop via `get_neighbors`
@@ -177,7 +179,7 @@
       - Build `candidate_weights` dict: max edge weight per neighbor uuid across all seeds
       - Skip neighbors already in `exclude` or `seen`; sort by edge weight desc; take top `max_graph_events`
       - For each candidate: `faiss_svc.get_vector(uuid, index)` → semantic score via `_cosine_sim` (no new embedding call; `sem=0.0` if absent)
-      - DB lookup + kind filter same as primary collection; source=`"graph"`; `seen.add(nh_uuid)` before DB lookup
+      - DB lookup + kind filter same as primary collection; `updates` = `(row.updates or []) + (row.pending_facts or [])` — combined; source=`"graph"`; `seen.add(nh_uuid)` before DB lookup
    - 5.10 Merge `primary_events + graph_expanded`; **sort by composite score descending** → `all_events`
    - 5.11 Logs debug: `C3 result: primary=N graph=N total=N` and `graph_expand: seed_ids=N → expanded=N (hops=N)`
    - 5.12 Return `LongTermResult(events=all_events, graph_expanded=graph_expanded, total_found=len(all_events))`
@@ -300,6 +302,7 @@
    - Format each event via `_format_event_block(event)`:
       - **Episodic** (`event_kind != "entity"`): `[E1] Topic: {core_intent}\nUpdates:\n- ...`
       - **Entity** (`event_kind == "entity"`): `[L2 - ENTITY: {entity_type}]\nName: ...\nProfile: {summary_text}\nKnown facts:\n- ...`
+      - `Known facts` = `(row.updates or []) + (row.pending_facts or [])` — consolidated baseline + pending; entity synthesis always reflects the full known picture
    - Join event blocks with `"\n\n"` → `events_block`
    - If `linked_entities` present:
       - Assign `event_id = f"N{i+1}"` to each entity via `{**entity, "event_id": f"N{i+1}"}`

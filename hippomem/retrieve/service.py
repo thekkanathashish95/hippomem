@@ -72,7 +72,7 @@ def _row_to_episode(
         source=source,
         event_kind=row.engram_kind or "episode",
         summary_text=row.summary_text,
-        updates=row.updates or [],
+        updates=(row.updates or []) + (row.pending_facts or []),
         entity_type=row.entity_type,
         cosine_score=cosine_score,
         rrf_score=rrf_score,
@@ -295,7 +295,7 @@ class RetrieveService:
                     event_kind="entity",
                     entity_type=r.entity_type,
                     summary_text=r.summary_text,
-                    updates=r.updates or [],
+                    updates=(r.updates or []) + (r.pending_facts or []),
                     graph_hop=0,
                 ))
             return result

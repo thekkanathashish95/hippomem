@@ -4,7 +4,7 @@ Vectors live in FAISS per-user index. All engrams are persisted here on create.
 """
 import enum
 import uuid
-from sqlalchemy import Column, String, DateTime, UniqueConstraint, Integer, JSON, Float, Text
+from sqlalchemy import Column, String, DateTime, UniqueConstraint, Integer, JSON, Float, Text, Boolean
 from sqlalchemy.sql import func
 
 from hippomem.db.base import Base
@@ -41,6 +41,10 @@ class Engram(Base):
     summary_text = Column(Text, nullable=True)     # For SUMMARY / future ENTITY nodes
 
     reinforcement_count = Column(Integer, nullable=True)
+
+    # Pending consolidation — written by encoder, cleared by consolidation
+    pending_facts = Column(JSON, nullable=True)           # facts/updates appended since last consolidation
+    needs_consolidation = Column(Boolean, default=False, nullable=False, server_default="0")  # indexed flag
 
     # Decay
     relevance_score = Column(Float, default=1.0, nullable=True)

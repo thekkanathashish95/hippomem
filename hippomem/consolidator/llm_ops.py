@@ -1,5 +1,6 @@
 """
-LLM Operations for consolidation — cluster summary generation and entity profile enrichment.
+LLM Operations for consolidation — entity profile enrichment, episode compression,
+and persona narrative generation.
 
 Prompts loaded from hippomem/prompts/consolidator.yaml.
 """
@@ -19,6 +20,12 @@ class UpdateEntityProfileResponse(BaseModel):
 
     merged_facts: List[str] = Field(default_factory=list)
     summary_text: str = ""
+
+
+class ConsolidateEpisodeResponse(BaseModel):
+    """LLM response: compressed update list for an episode."""
+
+    merged_updates: List[str] = Field(default_factory=list)
 
 
 class GenerateIdentitySummaryResponse(BaseModel):
@@ -66,16 +73,19 @@ class ConsolidationLLMOps:
         self,
         canonical_name: str,
         entity_type: str,
-        all_facts: List[str],
+        consolidated_facts: List[str],
+        pending_facts: List[str],
         existing_summary: Optional[str],
     ) -> Dict[str, Any]:
-        """Merge facts and generate summary_text for an entity profile."""
+        """Merge pending facts into consolidated baseline and regenerate summary."""
         prompts = get_consolidator_prompts("update_entity_profile")
-        facts_str = "\n".join(f"- {f}" for f in all_facts) or "(none)"
+        consolidated_str = "\n".join(f"- {f}" for f in consolidated_facts) or "(none)"
+        pending_str = "\n".join(f"- {f}" for f in pending_facts) or "(none)"
         user_content = prompts["user_template"].format(
             canonical_name=canonical_name,
             entity_type=entity_type,
-            all_facts=facts_str,
+            consolidated_facts=consolidated_str,
+            pending_facts=pending_str,
             existing_summary=existing_summary or "(none)",
         )
         messages = [
@@ -96,4 +106,39 @@ class ConsolidationLLMOps:
             }
         except Exception as e:
             logger.error("update_entity_profile LLM call failed: %s", e)
-            return {"merged_facts": all_facts, "summary_text": existing_summary or ""}
+            return {
+                "merged_facts": consolidated_facts + pending_facts,
+                "summary_text": existing_summary or "",
+            }
+
+    def consolidate_episode_updates(
+        self,
+        core_intent: str,
+        consolidated_updates: List[str],
+        pending_updates: List[str],
+    ) -> Dict[str, Any]:
+        """Compress pending episode updates into the consolidated baseline."""
+        prompts = get_consolidator_prompts("consolidate_episode_updates")
+        consolidated_str = "\n".join(f"- {u}" for u in consolidated_updates) or "(none)"
+        pending_str = "\n".join(f"- {u}" for u in pending_updates) or "(none)"
+        user_content = prompts["user_template"].format(
+            core_intent=core_intent,
+            consolidated_updates=consolidated_str,
+            pending_updates=pending_str,
+        )
+        messages = [
+            {"role": "system", "content": prompts["system"]},
+            {"role": "user", "content": user_content},
+        ]
+        try:
+            result = self.llm.chat_structured(
+                messages=messages,
+                response_model=ConsolidateEpisodeResponse,
+                temperature=0.3,
+                max_tokens=4000,
+                op="consolidate_episode_updates",
+            )
+            return {"merged_updates": result.merged_updates or []}
+        except Exception as e:
+            logger.error("consolidate_episode_updates LLM call failed: %s", e)
+            return {"merged_updates": consolidated_updates + pending_updates}

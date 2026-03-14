@@ -32,12 +32,15 @@ operations:
     system: |
       You are an entity profile consolidator for a conversational memory system.
 
-      You are given all known facts about an entity (gathered chronologically from conversation turns)
-      and an existing summary (if any). Your job is to:
+      You are given facts about an entity in two sections:
+      - Consolidated facts: already merged and clean from a previous consolidation pass. Treat these as the reliable baseline.
+      - New facts: raw facts appended since the last consolidation. These may overlap with, contradict, or extend the consolidated facts.
 
-      1. merged_facts: Produce a clean, ordered list of facts.
-         - Deduplicate: remove duplicates; prefer the more specific version.
-         - Supersede: if a new fact replaces an old one (e.g., new role), keep only the new one.
+      Your job is to:
+
+      1. merged_facts: Integrate the new facts into the consolidated baseline to produce a clean, ordered list.
+         - Deduplicate: remove duplicates between consolidated and new; prefer the more specific version.
+         - Supersede: if a new fact replaces an old one (e.g., new role, new location), keep only the new one.
          - Order: relationship-defining facts first — how the user knows this entity, what role the entity plays in the user's life. Intrinsic properties (location, size, industry) come after.
          - If the merged fact list would exceed 10–12 items, prioritize the most relationship-relevant and defining facts and omit or compress the rest.
 
@@ -53,10 +56,15 @@ operations:
     user_template: |
       **Entity**: {canonical_name} ({entity_type})
 
-      **All known facts** (chronological from conversation history):
-      <all_facts>
-      {all_facts}
-      </all_facts>
+      **Consolidated facts** (already merged and clean — treat as reliable baseline):
+      <consolidated_facts>
+      {consolidated_facts}
+      </consolidated_facts>
+
+      **New facts** (appended since last consolidation — integrate these into the baseline):
+      <new_facts>
+      {pending_facts}
+      </new_facts>
 
       **Existing summary** (from previous consolidation, if any):
       <existing_summary>
@@ -67,4 +75,43 @@ operations:
       {{
         "merged_facts": ["...", "..."],
         "summary_text": "..."
+      }}
+
+  consolidate_episode_updates:
+    system: |
+      You are an episode memory consolidator for a conversational memory system.
+
+      An episode tracks a topic or thread across multiple conversation turns. Each turn may append
+      a new update statement describing what was discussed, decided, or changed.
+
+      You are given episode update statements in two sections:
+      - Consolidated updates: already compressed from a previous consolidation pass. Treat these as the reliable baseline.
+      - New updates: statements appended since the last consolidation. These may extend, refine, or supersede earlier ones.
+
+      Your job is to produce merged_updates: a compact, ordered list of update statements that captures
+      the full state of this episode.
+      - Supersede: if a new update contradicts or replaces an earlier one (e.g., a decision was reversed),
+        keep only the current state. Do not keep both sides of a reversal.
+      - Compress: merge closely related statements into one where meaning is fully preserved.
+      - Preserve chronological meaning: the order should reflect how the episode evolved.
+      - Cap at 8–10 items. If more, compress the oldest/least-significant ones.
+
+      Return valid JSON only. No explanations.
+
+    user_template: |
+      **Episode topic**: {core_intent}
+
+      **Consolidated updates** (already compressed — treat as reliable baseline):
+      <consolidated_updates>
+      {consolidated_updates}
+      </consolidated_updates>
+
+      **New updates** (appended since last consolidation — integrate these):
+      <new_updates>
+      {pending_updates}
+      </new_updates>
+
+      Return JSON:
+      {{
+        "merged_updates": ["...", "..."]
       }}

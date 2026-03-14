@@ -90,7 +90,7 @@
 ---
 
 ### 4a. `_handle_demotion()` [E:544]
-> FIFO demotion when active list exceeds capacity. Score-based staleness demotion lives in ConsolidationService.consolidate().
+> FIFO demotion when active list exceeds capacity. This is the only demotion mechanism; no score-based staleness demotion exists.
 
    - `while len(active) > max_active_events`:
       - `u = active.pop()` — pops the **last** (oldest) element
@@ -156,19 +156,24 @@
 ---
 
 ### 5c. `_update_event_content()` [E:315]
-> LLM update of core_intent and updates; re-embed and sync FAISS when content changes.
+> LLM update of core_intent and pending_facts; re-embed and sync FAISS when content changes.
 
    - Build `event_tuples: List[(uuid, row, event_dict)]` for all rows with non-empty `core_intent`
+      - `event_dict["updates"]` = `row.updates or []` — consolidated baseline only (pending_facts NOT shown to LLM here)
    - Early return if `event_tuples` is empty
    - **(LLM)** `extract_event_update(events, user_message, agent_response, reasoning, synthesized_context, recent_turns)` [EL:36] — see §5d
    - Load FAISS once: `faiss_svc.load_index(user_id) or faiss_svc.get_or_create_index(user_id)` — tries existing index first
    - `faiss_dirty = False`
    - For each `(event_uuid, row, _), updated` pair:
-      - Apply LLM result: if `add_update=True and update`: append to `new_updates`; if `refined_core_intent`: replace `new_core_intent`
-      - `new_content_hash = compute_content_hash(new_core_intent, new_updates)` — see §12a
+      - `new_pending = list(row.pending_facts or [])` — start from existing pending buffer
+      - Apply LLM result: if `add_update=True and update`: `new_pending.append(update)`; `fact_added = True`; if `refined_core_intent`: replace `new_core_intent`
+      - `all_facts = list(row.updates or []) + new_pending` — combined for hash + embed
+      - `new_content_hash = compute_content_hash(new_core_intent, all_facts)` — see §12a
       - If `content_hash_changed`:
-         - Update `row.core_intent`, `row.updates`, `row.content_hash`, `row.updated_at`
-         - `embed_engram(event_uuid, new_core_intent, new_updates, embedding_service)` — see §12b
+         - Update `row.core_intent`, `row.pending_facts = new_pending`, `row.content_hash`, `row.updated_at`
+         - If `fact_added`: `row.needs_consolidation = True` — flags engram for consolidation pass
+         - `row.updates` is **never written by the encoder** — only consolidation writes it
+         - `embed_engram(event_uuid, new_core_intent, all_facts, embedding_service)` — embeds full combined content — see §12b
          - If result: `add_to_faiss_realtime(...)` — see §12c; then `process_links_realtime(...)` — see §13
          - FAISS write wrapped in try/except with `logger.error`; sets `faiss_dirty = True`
       - Else (no change): update `row.updated_at = now` only
@@ -261,30 +266,19 @@
 > No MENTION link is written when `episode_uuid` is None.
 
    - 8.1 `recent_turns = format_recent_turns(conversation_history, updater_entity_extract_turns)`
-   - 8.2 **Build hint map** from `known_entity_uuids` (decoder-resolved entities):
-      - `_load_hint_entity_details(known_entity_uuids, user_id, db)` — batch-queries ENTITY engrams with non-null `core_intent`; returns `[{uuid, name, entity_type, facts}]`
-      - For each result: assigns alias `H1, H2, ...`; populates `hint_map: Dict[str, str]` (`alias → uuid`)
-      - `_truncate_facts(facts, max_chars=3000, max_fact_chars=300)` — each fact capped at 300 chars with `...`; total per entity capped at 3000 chars
-      - Formats `hint_block` string: `"**Known entities (likely referenced in this turn):**\nH1: Alice (person) — fact1; fact2\n..."`
-      - If `known_entity_uuids` is empty or no rows found: `hint_map = {}`, `hint_block = ""`
-   - 8.3 **(LLM)** `entity_llm_ops.extract_entities(user_message, agent_response, recent_turns, hint_block=hint_block)` [ENT:21]
-      - `hint_block` injected into user template via `{hint_block}` placeholder (empty string = no hints, no behavior change)
-      - Each `ExtractedEntity` may include `hint_id: Optional[str]` — `"H1"` if the LLM matched a hint, `None` for new entities
+   - 8.2 **(LLM)** `entity_llm_ops.extract_entities(user_message, agent_response, recent_turns)` [ENT:21]
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `EntityExtractionResult(entities=[])` (empty, not None)
-   - 8.4 Logs info: `entity_extract: user=... episode=... found=N significant=N hints=N`
-   - 8.5 Iterates ALL entities; `significant` check is inside the loop (non-significant skipped via `continue`)
-   - 8.6 For each significant entity — entire block in try/except: `db.rollback()` + `logger.error` on failure:
-      - **Hint anchor branch** (if `extracted.hint_id` is set AND `hint_id in hint_map`):
-         - Resolves UUID directly from `hint_map`; calls `_append_facts_to_entity(resolved_uuid, ...)` — skips name scan and disambiguation entirely
-         - Logs debug: `entity='...' match=hint_anchor uuid=...`
-      - **Normal branch** (hint_id is None or not in map): `_find_or_create_entity(extracted, user_id, db, user_message, agent_response, recent_turns)` — see §8a
-      - 8.6.1 If `entity_uuid and episode_uuid`: `_link_entity_to_episode(user_id, episode_uuid, entity_uuid, mention_type, db)` — see §8b
-      - 8.6.2 `db.commit()` — per-entity commit to release DB lock before next entity's embedding API call
+   - 8.3 `significant = [e for e in result.entities if e.significant]`; logs info `entity_extract: user=... episode=... found=N significant=N`
+   - 8.4 Iterates ALL entities; `significant` check is inside the loop (non-significant skipped via `continue`)
+   - 8.5 For each significant entity — entire block in try/except: `db.rollback()` + `logger.error` on failure:
+      - 8.5.1 `_find_or_create_entity(extracted, user_id, db, user_message, agent_response, recent_turns, known_entity_uuids)` — see §8a
+      - 8.5.2 If `entity_uuid and episode_uuid`: `_link_entity_to_episode(user_id, episode_uuid, entity_uuid, mention_type, db)` — see §8b
+      - 8.5.3 `db.commit()` — per-entity commit to release DB lock before next entity's embedding API call
 
 ---
 
 ### 8a. `_find_or_create_entity()` [E:658]
-> Only called for entities with no hint_id. Lookup strategy: name scan → exact auto-update → LLM disambiguation → create.
+> Lookup strategy: name scan → exact auto-update → synthesis hint → LLM disambiguation → create.
 
    - `_find_entity_candidates_by_name(canonical_name, entity_type, user_id, db)` [E:610]:
       - Queries all ENTITY engrams for this user filtered by same `entity_type`
@@ -293,6 +287,7 @@
       - Returns `List[(tier, row)]`
    - **0 candidates** → `_create_entity_node(extracted, user_id, db, faiss_svc)` — see §8d; logs debug `entity='...' match=none → create`
    - **1 exact match** → `_append_facts_to_entity(matched_row.engram_id, ...)` via `get_or_create_index` — logs debug `entity='...' match=exact uuid=...`
+   - **Synthesis hint**: filter candidates to `known_candidates` where `row.engram_id in known_entity_uuids`; if exactly 1 → `_append_facts_to_entity(...)` directly, no LLM call — logs debug `entity='...' match=synthesis_hint uuid=...`
    - **Multiple matches or non-exact only** → build `mention_context` from `recent_turns + user_message + agent_response`; **(LLM)** `entity_llm_ops.disambiguate_entity(new_name, entity_type, mention_context, candidates_for_llm)` [ENT:50]
       - Candidates formatted as `candidate_1: {name}\n  - {fact}...` blocks
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `DisambiguationResult(match=None, confidence=0.0, reason="LLM error")`
@@ -312,12 +307,14 @@
 
 ### 8c. `_append_facts_to_entity()` [E:750]
    - Loads entity row; returns `entity_uuid` immediately if row not found (no-op guard)
-   - `new_facts = [f for f in extracted.facts if f not in existing_facts]` — dedup against existing
+   - `existing_consolidated = list(row.updates or [])`, `existing_pending = list(row.pending_facts or [])`
+   - `new_facts = [f for f in extracted.facts if f not in (existing_consolidated + existing_pending)]` — dedup against both fields
    - Always bumps `reinforcement_count += 1` (even if no new facts)
-   - Re-embeds only if `new_facts` were added:
-      - `_build_entity_embed_text(name, entity_type, updated_facts)` — see §12d
+   - If `new_facts` were added:
+      - `new_pending = existing_pending + new_facts`; `row.pending_facts = new_pending`; `row.needs_consolidation = True`
+      - `all_facts = existing_consolidated + new_pending` — full combined list for embed
+      - `_build_entity_embed_text(name, entity_type, all_facts)` — see §12d
       - `embedding_service.embed(embed_text)` → single embed (not batch)
-      - `content_hash = compute_content_hash(row.core_intent, row.updates)` — see §12a
       - `add_to_faiss_realtime(...)` — see §12c; then `faiss_svc.save_index(user_id, index)`
       - Re-embed failure: `logger.error(...)`, continues (re-embed is non-fatal)
    - Logs debug: `entity=... facts_added=N re_embedded=True/False`
@@ -327,8 +324,9 @@
 
 ### 8d. `_create_entity_node()` [E:797]
    - `entity_uuid = str(uuid4())`, `content_hash = compute_content_hash(canonical_name, facts)` — see §12a
-   - Engram created with: `engram_kind=ENTITY, reinforcement_count=1, relevance_score=1.0, summary_text=None`
-      - `summary_text` is set later by `ConsolidationService.enrich_entity_profiles()` during consolidation
+   - Engram created with: `engram_kind=ENTITY, updates=[], pending_facts=list(facts), needs_consolidation=True, reinforcement_count=1, relevance_score=1.0, summary_text=None`
+      - `updates` starts empty; `pending_facts` holds the initial extracted facts
+      - `summary_text` and consolidated `updates` are set by `enrich_entity_profiles()` during consolidation
    - `db.add(node)` → `db.flush()` → logs debug `entity=... match=create sim=0.000`
    - Embed text: `_build_entity_embed_text(canonical_name, entity_type, facts)` — see §12d
    - FAISS: `get_or_create_index(user_id)` → `embedding_service.embed(embed_text)` → `add_to_faiss_realtime(...)` + `save_index(user_id, index)` — see §12c
@@ -351,32 +349,33 @@
 ## 10. Self extraction — `SelfExtractor.extract_and_accumulate()` [SE:28]
 > Runs last, after entity extraction. Runs regardless of episodic path outcome.
 
-   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load **active-only** trait rows (category, key, value, evidence_count); inactive traits are excluded so the prompt context stays tight
+   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load all trait rows for context (category, key, value, evidence_count; not just active)
    - 10.2 `recent_turns = format_recent_turns(conversation_history, _SELF_EXTRACT_TURNS=3)` — hardcoded 3 turns
    - 10.3 **(LLM)** `llm_ops.extract_self_candidates(user_message, existing_traits, recent_turns)` [SL:16] → `result.candidates`
-      - Prompt shows existing active traits as `category | key: value  (seen Nx)` block
-      - LLM is instructed to return ONLY traits not already captured in the profile, or traits whose value has meaningfully changed — no action classification
+      - Prompt shows existing traits as `category | key: value  (seen Nx)` block
+      - LLM classifies each signal as `new`, `confirm`, or `update`
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `SelfExtractionResult(candidates=[])`
    - 10.4 Fast path: if `not result.candidates` → return immediately (no DB write)
    - 10.5 Logs debug: `extract: candidates=N`
-   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `upserted: int` — see §10a
+   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `(upserted, newly_active)` — see §10a
    - 10.7 `db.commit()`
-   - 10.8 Logs debug: `traits: upserted=N`
+   - 10.8 Logs debug: `traits: upserted=N newly_active=N`
 
 ---
 
 ### 10a. `accumulate_traits()` [SS:30]
-> Pure upsert — the LLM only returns new or changed traits, so every candidate is either a fresh insert or an intentional value update.
+> Upserts SelfTrait rows per LLM action classification.
 
-   - **No existing row** (new trait):
-      - Insert with `is_active=True`, `evidence_count=1`, `confidence_score = candidate.confidence_estimate`
+   - **No existing row** (treat as `new` regardless of LLM action):
+      - Insert with `is_active=True`, `evidence_count=1`, `confidence_score = candidate.confidence_estimate * 0.6`
       - `first_observed_at = last_observed_at = now`
-   - **Existing row** (value changed):
-      - `row.previous_value = row.value; row.value = candidate.value` — old value preserved in `previous_value`
-      - `evidence_count += 1`, `is_active = True` (re-activates if consolidator had demoted), `last_observed_at = now`
+   - **Existing row** — action semantics:
+      - `update`: `row.previous_value = row.value; row.value = candidate.value` — value evolved, old value preserved
+      - `confirm`: value unchanged — only strengthen evidence; value untouched
+      - `new` (conflict, row exists): treated as `update`
+      - All paths: `evidence_count += 1`, `is_active = True` (re-activates if consolidator had demoted), `last_observed_at = now`
       - `confidence_score = min(1.0, row.confidence_score + 0.1 * candidate.confidence_estimate)`
-      - Note: code also handles the case where `row.value == candidate.value` defensively (no value write, evidence still increments) — this should not occur in normal operation since the LLM is instructed not to return already-captured traits
-   - Returns `upserted: int` (count of rows inserted or updated)
+   - Returns `(upserted, newly_active)` where `newly_active` counts rows that transitioned from inactive to active
 
 ---
 

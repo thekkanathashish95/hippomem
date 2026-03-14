@@ -34,6 +34,11 @@ from hippomem.decoder.context_builder import format_recent_turns
 logger = logging.getLogger(__name__)
 
 
+def _all_facts(row) -> List[str]:
+    """Return the full fact list for an engram: consolidated updates + pending facts."""
+    return (row.updates or []) + (row.pending_facts or [])
+
+
 def _truncate_facts(facts: List[str], max_chars: int = 3000, max_fact_chars: int = 300) -> str:
     """
     Join facts into a preview string.
@@ -374,13 +379,16 @@ class MemoryEncoder:
         faiss_dirty = False
 
         for (event_uuid, row, _), updated in zip(event_tuples, updated_list):
-            new_updates = list(row.updates or [])
+            new_pending = list(row.pending_facts or [])
             new_core_intent = row.core_intent or ""
+            fact_added = False
             if updated.get("add_update") and updated.get("update"):
-                new_updates.append(updated["update"])
+                new_pending.append(updated["update"])
+                fact_added = True
             if updated.get("refined_core_intent"):
                 new_core_intent = updated["refined_core_intent"]
-            new_content_hash = compute_content_hash(new_core_intent, new_updates)
+            all_facts = list(row.updates or []) + new_pending
+            new_content_hash = compute_content_hash(new_core_intent, all_facts)
             content_hash_changed = new_content_hash != row.content_hash
             logger.debug(
                 "path_A update: content_hash_changed=%s → %s",
@@ -388,12 +396,14 @@ class MemoryEncoder:
             )
             if content_hash_changed:
                 row.core_intent = new_core_intent
-                row.updates = new_updates
+                row.pending_facts = new_pending
+                if fact_added:
+                    row.needs_consolidation = True
                 row.content_hash = new_content_hash
                 row.updated_at = datetime.now(timezone.utc)
                 if index:
                     result = embed_engram(
-                        event_uuid, new_core_intent, new_updates,
+                        event_uuid, new_core_intent, all_facts,
                         self.embedding_service,
                     )
                     if result:
@@ -561,10 +571,7 @@ class MemoryEncoder:
         self.consolidation.apply_decay_uuids(user_id, session_id, active, db)
 
     def _handle_demotion(self, working_state: WorkingStateData) -> List[str]:
-        """
-        FIFO demotion when over capacity. Returns list of demoted UUIDs.
-        Score-based demotion lives in ConsolidationService.consolidate.
-        """
+        """FIFO demotion when over capacity. Returns list of demoted UUIDs."""
         max_active = self.consolidation.config.max_active_events
         max_dormant = self.consolidation.config.max_dormant_events
         active = working_state.active_event_uuids
@@ -604,7 +611,7 @@ class MemoryEncoder:
                 "uuid": row.engram_id,
                 "name": row.core_intent,
                 "entity_type": row.entity_type or "other",
-                "facts": list(row.updates or []),
+                "facts": _all_facts(row),
             }
             for row in rows
         ]
@@ -776,7 +783,7 @@ class MemoryEncoder:
         candidates_for_llm = [
             {
                 "name": row.core_intent,
-                "facts": list(row.updates or []),
+                "facts": _all_facts(row),
                 "entity_uuid": row.engram_id,
             }
             for _, row in candidates
@@ -831,20 +838,25 @@ class MemoryEncoder:
         if not row:
             return entity_uuid
 
-        existing_facts = list(row.updates or [])
-        new_facts = [f for f in extracted.facts if f not in existing_facts]
+        existing_consolidated = list(row.updates or [])
+        existing_pending = list(row.pending_facts or [])
+        all_known = existing_consolidated + existing_pending
+        new_facts = [f for f in extracted.facts if f not in all_known]
         row.reinforcement_count = (row.reinforcement_count or 0) + 1
         re_embedded = False
         if new_facts:
-            row.updates = existing_facts + new_facts
+            new_pending = existing_pending + new_facts
+            row.pending_facts = new_pending
+            row.needs_consolidation = True
             row.updated_at = datetime.now(timezone.utc)
 
+            all_facts = existing_consolidated + new_pending
             embed_text = _build_entity_embed_text(
-                row.core_intent, row.entity_type or extracted.entity_type, row.updates
+                row.core_intent, row.entity_type or extracted.entity_type, all_facts
             )
             try:
                 vector = self.embedding_service.embed(embed_text)
-                content_hash = compute_content_hash(row.core_intent, row.updates)
+                content_hash = compute_content_hash(row.core_intent, all_facts)
                 add_to_faiss_realtime(
                     user_id, entity_uuid, vector, content_hash, faiss_svc, index, db
                 )
@@ -875,7 +887,9 @@ class MemoryEncoder:
             engram_kind=EngramKind.ENTITY.value,
             entity_type=extracted.entity_type,
             core_intent=extracted.canonical_name,
-            updates=list(extracted.facts),
+            updates=[],
+            pending_facts=list(extracted.facts),
+            needs_consolidation=True,
             summary_text=None,
             content_hash=content_hash,
             relevance_score=1.0,

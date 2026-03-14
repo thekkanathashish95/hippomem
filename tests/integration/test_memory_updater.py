@@ -86,8 +86,9 @@ def test_event_updates_list_extended_with_returned_update(db, mock_llm, mock_emb
     updater.update("user1", "session1", conversation_history, db, used_engram_ids=["event1"])
 
     db.refresh(event)
-    assert "new update" in event.updates
+    # old update stays in consolidated updates; new update goes to pending_facts until consolidation
     assert "old update" in event.updates
+    assert "new update" in (event.pending_facts or [])
 
 
 def test_event_reinforcement_count_increments(db, mock_llm, mock_embeddings, config):

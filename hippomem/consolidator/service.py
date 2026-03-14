@@ -1,12 +1,11 @@
 """
-Memory Consolidation Service — decay, demotion, and Engram persistence.
-Single authority for relevance score decay and demotion decisions.
+Memory Consolidation Service — decay and Engram persistence.
+Single authority for relevance score decay on active events.
 """
-import math
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from hippomem.models.working_state import WorkingState
@@ -25,25 +24,12 @@ class ConsolidationConfig:
     max_active_events: int = 5
     max_dormant_events: int = 5
     relevance_decay_rate: float = 0.98  # per hour; ~2% loss/hour, ~40% loss/day
-    recency_lambda: float = 0.05
-    weight_relevance: float = 0.5
-    weight_recency: float = 0.3
-    weight_frequency: float = 0.2
-    stale_after_minutes: int = 1440  # 24h
-
-
-@dataclass
-class ConsolidationResult:
-    demoted_event_ids: List[str]
-    total_active_after: int
 
 
 class ConsolidationService:
     """
-    Single authority for:
-    - Applying decay to active events in Engram
-    - Computing composite demotion score
-    - Demoting events from active to dormant
+    Single authority for applying decay to active events in Engram.
+    Demotion is handled entirely by the encoder (FIFO on capacity).
     """
 
     def __init__(self, config: Optional[ConsolidationConfig] = None) -> None:
@@ -104,128 +90,6 @@ class ConsolidationService:
                 "decay: engram=%s score_before=%.3f score_after=%.3f",
                 row.engram_id, score_before, score_after,
             )
-
-    def consolidate(
-        self,
-        user_id: str,
-        session_id: Optional[str],
-        db: Session,
-        working_state: Optional[WorkingStateData] = None,
-    ) -> ConsolidationResult:
-        """Apply decay + staleness demotion."""
-        if working_state is None:
-            working_state = self._load_working_state(user_id, session_id, db)
-        if not working_state:
-            return ConsolidationResult(demoted_event_ids=[], total_active_after=0)
-        return self._consolidate_uuids(user_id, session_id, working_state, db)
-
-    def _consolidate_uuids(
-        self,
-        user_id: str,
-        session_id: Optional[str],
-        working_state: WorkingStateData,
-        db: Session,
-    ) -> ConsolidationResult:
-        active = working_state.active_event_uuids
-        dormant = working_state.recent_dormant_uuids
-        if not active:
-            return ConsolidationResult(demoted_event_ids=[], total_active_after=0)
-
-        self.apply_decay_uuids(user_id, session_id, active, db)
-
-        rows = db.query(Engram).filter(
-            Engram.user_id == user_id,
-            Engram.engram_id.in_(active),
-        ).all()
-        uuid_to_row = {r.engram_id: r for r in rows}
-        now = datetime.now(timezone.utc)
-        events_for_scoring = []
-        for u in active:
-            row = uuid_to_row.get(u)
-            if row:
-                events_for_scoring.append({
-                    "event_uuid": u,
-                    "relevance_score": row.relevance_score or 1.0,
-                    "last_touched": row.last_updated_at.isoformat() if row.last_updated_at else None,
-                    "reinforcement_count": row.reinforcement_count or 0,
-                })
-
-        scored = [(e, self._compute_demotion_score(e, now)) for e in events_for_scoring]
-        demoted_uuids: List[str] = []
-
-        # Staleness demotion: only demote if at capacity and worst event is stale
-        if len(active) >= self.config.max_active_events:
-            stale_scored = [(e, s) for e, s in scored if self._is_stale(e, now)]
-            if stale_scored:
-                worst = max(stale_scored, key=lambda x: x[1])
-                u = worst[0]["event_uuid"]
-                active.remove(u)
-                demoted_uuids.append(u)
-                dormant.insert(0, u)
-                if len(dormant) > self.config.max_dormant_events:
-                    dormant.pop()
-
-        working_state.active_event_uuids = active
-        working_state.recent_dormant_uuids = dormant
-        working_state.last_updated = now.isoformat()
-        self._persist_working_state(user_id, session_id, working_state, db)
-        db.commit()
-
-        if demoted_uuids:
-            logger.info("Demoted %d events: %s", len(demoted_uuids), demoted_uuids)
-
-        return ConsolidationResult(
-            demoted_event_ids=demoted_uuids,
-            total_active_after=len(active),
-        )
-
-    def _compute_demotion_score(self, event: Dict[str, Any], now: datetime) -> float:
-        """Higher = more likely to demote."""
-        relevance = event.get("relevance_score", 1.0)
-
-        last_touched = event.get("last_touched")
-        minutes_since_touch = 0.0
-        if last_touched:
-            try:
-                if isinstance(last_touched, str):
-                    lt = datetime.fromisoformat(last_touched.replace("Z", "+00:00"))
-                else:
-                    lt = last_touched
-                if lt.tzinfo is None:
-                    lt = lt.replace(tzinfo=timezone.utc)
-                minutes_since_touch = (now - lt).total_seconds() / 60.0
-            except (ValueError, TypeError):
-                pass
-
-        recency_factor = math.exp(-self.config.recency_lambda * minutes_since_touch)
-        frequency_factor = math.log(1 + event.get("reinforcement_count", 0))
-        normalized_frequency = min(frequency_factor / 5.0, 1.0)
-
-        retention = (
-            relevance * self.config.weight_relevance
-            + recency_factor * self.config.weight_recency
-            + normalized_frequency * self.config.weight_frequency
-        )
-        return 1.0 - retention
-
-    def _is_stale(self, event: Dict[str, Any], now: datetime) -> bool:
-        """Stale = untouched for > threshold AND relevance < 0.2."""
-        last_touched = event.get("last_touched")
-        if not last_touched:
-            return False
-        try:
-            if isinstance(last_touched, str):
-                lt = datetime.fromisoformat(last_touched.replace("Z", "+00:00"))
-            else:
-                lt = last_touched
-            if lt.tzinfo is None:
-                lt = lt.replace(tzinfo=timezone.utc)
-            minutes_since = (now - lt).total_seconds() / 60.0
-        except (ValueError, TypeError):
-            return False
-        if minutes_since <= self.config.stale_after_minutes:
-            return False
-        return event.get("relevance_score", 1.0) < 0.2
 
     def _load_working_state(
         self,
@@ -366,7 +230,7 @@ def consolidate_self_memory(
 def consolidate_user(
     user_id: str,
     db: Session,
-    consolidation_svc: ConsolidationService,
+    enable_episode_consolidation: bool = True,
     enable_entity_extraction: bool = False,
     consolidation_llm_ops: Optional["ConsolidationLLMOps"] = None,
     embedding_service: Optional["EmbeddingService"] = None,
@@ -376,25 +240,22 @@ def consolidate_user(
 ) -> None:
     """
     Run all periodic maintenance for a single user.
+    Decay and demotion are handled by the encoder on each turn.
     Called by MemoryService.consolidate() and BackgroundConsolidationTask.
     """
-    from hippomem.models.working_state import WorkingState
-
-    # 1. Staleness demotion — per session
-    scopes = (
-        db.query(WorkingState.session_id)
-        .filter(WorkingState.user_id == user_id)
-        .distinct()
-        .all()
-    )
-    for (session_id,) in scopes:
+    # 1. Episode fact consolidation
+    if enable_episode_consolidation and consolidation_llm_ops and embedding_service:
         try:
-            consolidation_svc.consolidate(user_id, session_id, db)
-        except Exception as e:
-            logger.error(
-                "Consolidation failed for user=%s session=%s: %s",
-                user_id, session_id, e,
+            n = consolidate_episode_facts(
+                user_id=user_id,
+                db=db,
+                llm_ops=consolidation_llm_ops,
+                embedding_service=embedding_service,
+                vector_dir=vector_dir,
             )
+            logger.debug("episode_consolidation: user=%s episodes_consolidated=%d", user_id, n)
+        except Exception as e:
+            logger.error("Episode consolidation failed for user=%s: %s", user_id, e)
 
     # 2. Entity enrichment
     if enable_entity_extraction and consolidation_llm_ops and embedding_service:
@@ -441,11 +302,11 @@ def enrich_entity_profiles(
     entity_decay_rate: float = 0.999,
 ) -> int:
     """
-    For each entity node for this user:
+    For each entity engram with pending facts:
     1. Apply entity-specific decay
-    2. Merge facts + generate summary_text via LLM
-    3. Re-embed with full content
-    4. Create entity-entity edges for co-appearing entities (deferred to v1.5 enhanced)
+    2. Merge pending facts into consolidated baseline via LLM
+    3. Re-embed with full content (name + summary + merged facts)
+    4. Clear pending_facts and needs_consolidation flag
 
     Returns count of entities enriched.
     """
@@ -455,6 +316,7 @@ def enrich_entity_profiles(
     entity_rows = db.query(Engram).filter(
         Engram.user_id == user_id,
         Engram.engram_kind == EngramKind.ENTITY.value,
+        Engram.needs_consolidation.is_(True),
     ).all()
 
     if not entity_rows:
@@ -468,7 +330,6 @@ def enrich_entity_profiles(
     for row in entity_rows:
         # 1. Entity decay
         last_decay = row.last_decay_applied_at
-        last_enriched_at = last_decay  # capture before overwriting
         if last_decay:
             if last_decay.tzinfo is None:
                 last_decay = last_decay.replace(tzinfo=timezone.utc)
@@ -480,31 +341,21 @@ def enrich_entity_profiles(
                 )
         row.last_decay_applied_at = now
 
-        # 2. LLM profile enrichment — only if facts were added since last enrichment
-        updated_at = row.updated_at
-        if updated_at and updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-        if last_enriched_at and last_enriched_at.tzinfo is None:
-            last_enriched_at = last_enriched_at.replace(tzinfo=timezone.utc)
-        needs_enrichment = (
-            last_enriched_at is None  # never enriched
-            or updated_at is None
-            or updated_at > last_enriched_at
-        )
-        if not needs_enrichment:
-            continue
-
         try:
+            # 2. Merge pending facts into consolidated baseline
             result = llm_ops.update_entity_profile(
                 canonical_name=row.core_intent or "",
                 entity_type=row.entity_type or "entity",
-                all_facts=list(row.updates or []),
+                consolidated_facts=list(row.updates or []),
+                pending_facts=list(row.pending_facts or []),
                 existing_summary=row.summary_text,
             )
             row.updates = result["merged_facts"]
             row.summary_text = result["summary_text"]
+            row.pending_facts = []
+            row.needs_consolidation = False
 
-            # 3. Re-embed with full content (name + summary + facts)
+            # 3. Re-embed with full content (name + summary + merged facts)
             summary = row.summary_text or ""
             facts = row.updates or []
             embed_parts = [f"{row.core_intent} ({row.entity_type or 'entity'})"]
@@ -528,3 +379,65 @@ def enrich_entity_profiles(
     db.commit()
     logger.info("Enriched %d entity profiles for user %s", enriched, user_id)
     return enriched
+
+
+def consolidate_episode_facts(
+    user_id: str,
+    db: Session,
+    llm_ops: "ConsolidationLLMOps",
+    embedding_service: "EmbeddingService",
+    vector_dir: str,
+) -> int:
+    """
+    For each episode engram with pending facts:
+    1. Merge pending update statements into consolidated baseline via LLM
+    2. Re-embed with merged updates
+    3. Clear pending_facts and needs_consolidation flag
+
+    Returns count of episodes consolidated.
+    """
+    from hippomem.infra.vector.faiss_service import FAISSService
+    from hippomem.infra.vector.embedding import compute_content_hash, add_to_faiss_realtime, embed_engram
+
+    episode_rows = db.query(Engram).filter(
+        Engram.user_id == user_id,
+        Engram.engram_kind == EngramKind.EPISODE.value,
+        Engram.needs_consolidation.is_(True),
+    ).all()
+
+    if not episode_rows:
+        return 0
+
+    faiss_svc = FAISSService(base_dir=vector_dir)
+    index = faiss_svc.get_or_create_index(user_id)
+    consolidated = 0
+
+    for row in episode_rows:
+        try:
+            result = llm_ops.consolidate_episode_updates(
+                core_intent=row.core_intent or "",
+                consolidated_updates=list(row.updates or []),
+                pending_updates=list(row.pending_facts or []),
+            )
+            row.updates = result["merged_updates"]
+            row.pending_facts = []
+            row.needs_consolidation = False
+            row.updated_at = datetime.now(timezone.utc)
+
+            embed_result = embed_engram(
+                row.engram_id, row.core_intent or "", row.updates, embedding_service
+            )
+            if embed_result:
+                vector, content_hash = embed_result
+                add_to_faiss_realtime(
+                    user_id, row.engram_id, vector, content_hash, faiss_svc, index, db
+                )
+            consolidated += 1
+        except Exception as e:
+            logger.error("Episode consolidation failed for %s: %s", row.engram_id, e)
+
+    if consolidated > 0:
+        faiss_svc.save_index(user_id, index)
+    db.commit()
+    logger.info("Consolidated %d episode engrams for user %s", consolidated, user_id)
+    return consolidated

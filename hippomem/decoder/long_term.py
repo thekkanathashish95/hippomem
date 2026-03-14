@@ -186,7 +186,7 @@ class LongTermRetriever:
                     "event_kind": row.engram_kind,
                     "entity_type": row.entity_type,
                     "summary_text": row.summary_text,
-                    "updates": row.updates or [],
+                    "updates": (row.updates or []) + (row.pending_facts or []),
                 })
             if len(primary_events) >= top_k:
                 break
@@ -233,7 +233,7 @@ class LongTermRetriever:
                         "event_kind": row.engram_kind,
                         "entity_type": row.entity_type,
                         "summary_text": row.summary_text,
-                        "updates": row.updates or [],
+                        "updates": (row.updates or []) + (row.pending_facts or []),
                     })
 
         all_events = sorted(

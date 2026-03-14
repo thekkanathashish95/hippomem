@@ -120,6 +120,10 @@ class MemoryConfig:
     self_trait_min_confidence: float = 0.5
     """Minimum confidence_score for a trait to be included in snapshot generation."""
 
+    # ── Episode consolidation ─────────────────────────────────────────────────
+    enable_episode_consolidation: bool = True
+    """Compress accumulated episode update statements during consolidate() runs."""
+
     # ── Entity extraction (v1.5) ──────────────────────────────────────────────
     enable_entity_extraction: bool = True
     """Extract and track named entities (persons, orgs, places, projects, pets) after each encode."""
