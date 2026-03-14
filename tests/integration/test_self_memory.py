@@ -31,14 +31,13 @@ def test_extract_and_accumulate_no_candidates_skips_db(db, mock_llm):
 
 
 def test_extract_and_accumulate_creates_trait_on_first_observation(db, mock_llm):
-    """LLM returns 1 candidate → SelfTrait row created, is_active=False."""
+    """LLM returns 1 candidate → SelfTrait row created, is_active=True."""
     mock_llm.chat_structured.return_value = SelfExtractionResult(
         candidates=[
             ExtractedSelfCandidate(
                 category="stable_attribute",
                 key="occupation",
                 value="software engineer",
-                action="new",
                 confidence_estimate=0.9,
             ),
         ]
@@ -59,19 +58,18 @@ def test_extract_and_accumulate_creates_trait_on_first_observation(db, mock_llm)
         SelfTrait.key == "occupation",
     ).first()
     assert row is not None
-    assert row.is_active is False
+    assert row.is_active is True
     assert row.evidence_count == 1
 
 
-def test_extract_and_accumulate_activates_on_second_observation(db, mock_llm):
-    """Call twice with same key → is_active=True after second call."""
+def test_extract_and_accumulate_increments_on_second_observation(db, mock_llm):
+    """Call twice with same key → evidence_count=2, is_active=True."""
     mock_llm.chat_structured.return_value = SelfExtractionResult(
         candidates=[
             ExtractedSelfCandidate(
                 category="goal",
                 key="career_goal",
                 value="building hippomem",
-                action="confirm",
                 confidence_estimate=0.8,
             ),
         ]
@@ -100,17 +98,19 @@ def test_extract_and_accumulate_activates_on_second_observation(db, mock_llm):
     assert row is not None
     assert row.is_active is True
     assert row.evidence_count == 2
+    assert row.value == "building hippomem"
 
 
 def test_extract_and_accumulate_seeds_existing_traits_into_llm(db, mock_llm):
     """Verifies llm_ops is called with existing trait values + evidence counts as context."""
-    # Pre-seed a trait with value and evidence_count
+    # Pre-seed an active trait with value and evidence_count
     t = SelfTrait(
         user_id="user1",
         category="stable_attribute",
         key="occupation",
         value="engineer",
         evidence_count=3,
+        is_active=True,
     )
     db.add(t)
     db.commit()

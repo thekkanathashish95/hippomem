@@ -20,10 +20,10 @@ class SelfLLMOps:
         recent_turns: str = "",
     ) -> SelfExtractionResult:
         """
-        Classify self-signals in the current user message against known traits.
-        The LLM sees existing trait values + evidence counts and returns
-        action-tagged candidates (new / update / confirm).
-        Returns empty candidates list when nothing actionable is found.
+        Extract self-signals from the current message that are absent or changed
+        relative to existing active traits. The LLM sees the current trait profile
+        and returns only candidates not already captured there.
+        Returns empty candidates list when nothing new is found.
         """
         prompts = get_self_prompts("extract_self_candidates")
         existing_traits_block = (

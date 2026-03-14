@@ -12,13 +12,13 @@ from hippomem.memory.self.schemas import ExtractedSelfCandidate
 
 def get_existing_traits(user_id: str, db: Session) -> List[Dict[str, str]]:
     """
-    Load full trait state for a user: category, key, value, evidence_count.
-    Used to seed the extraction prompt so the LLM can classify each candidate
-    as new / update / confirm rather than re-extracting everything blindly.
+    Load active traits for a user: category, key, value, evidence_count.
+    Passed to the extraction prompt so the LLM only returns traits not already
+    captured here (or ones whose value has meaningfully changed).
     """
     rows = (
         db.query(SelfTrait.category, SelfTrait.key, SelfTrait.value, SelfTrait.evidence_count)
-        .filter(SelfTrait.user_id == user_id)
+        .filter(SelfTrait.user_id == user_id, SelfTrait.is_active.is_(True))
         .all()
     )
     return [
@@ -31,19 +31,15 @@ def accumulate_traits(
     user_id: str,
     candidates: List[ExtractedSelfCandidate],
     db: Session,
-) -> tuple:
+) -> int:
     """
-    Upsert SelfTrait rows based on explicit action classification from the LLM.
-    Activation rule: evidence_count >= 2.
-    Returns (upserted, newly_active).
-
-    Action semantics:
-      new     — insert; evidence_count=1, is_active=False (activates at evidence_count>=2)
-      confirm — increment evidence_count, leave value untouched
-      update  — value has changed; store previous_value before overwriting
+    Upsert SelfTrait rows from LLM-extracted candidates.
+    The LLM only returns traits that are new or changed, so every candidate
+    is either a fresh insert or an update to an existing value.
+    Returns the number of rows upserted.
     """
     now = datetime.now(timezone.utc)
-    upserted, newly_active = 0, 0
+    upserted = 0
     for c in candidates:
         row = (
             db.query(SelfTrait)
@@ -56,44 +52,29 @@ def accumulate_traits(
         )
 
         if row is None:
-            # Treat as new regardless of LLM action (no existing row to match)
             row = SelfTrait(
                 user_id=user_id,
                 category=c.category,
                 key=c.key,
                 value=c.value,
                 previous_value=None,
-                confidence_score=c.confidence_estimate * 0.6,
+                confidence_score=c.confidence_estimate,
                 evidence_count=1,
-                is_active=False,
+                is_active=True,
                 first_observed_at=now,
                 last_observed_at=now,
             )
             db.add(row)
-            upserted += 1
         else:
-            was_active = row.is_active
-            if c.action == "update":
-                # Value has evolved — preserve previous for traceability
+            if row.value != c.value:
                 row.previous_value = row.value
                 row.value = c.value
-            elif c.action == "confirm":
-                # Value unchanged — only strengthen evidence; don't touch value
-                pass
-            else:
-                # Fallback for "new" with a conflicting existing row: treat as update
-                row.previous_value = row.value
-                row.value = c.value
-            row.confidence_score = min(
-                1.0, row.confidence_score + 0.1 * c.confidence_estimate
-            )
+            row.confidence_score = min(1.0, row.confidence_score + 0.1 * c.confidence_estimate)
             row.evidence_count += 1
-            row.is_active = True  # re-activate if consolidator had demoted it
+            row.is_active = True
             row.last_observed_at = now
-            upserted += 1
-            if not was_active and row.is_active:
-                newly_active += 1
-    return (upserted, newly_active)
+        upserted += 1
+    return upserted
 
 
 def get_active_traits(user_id: str, db: Session) -> List[SelfTrait]:

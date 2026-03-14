@@ -351,33 +351,32 @@
 ## 10. Self extraction — `SelfExtractor.extract_and_accumulate()` [SE:28]
 > Runs last, after entity extraction. Runs regardless of episodic path outcome.
 
-   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load all trait rows for context (category, key, value, evidence_count; not just active)
+   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load **active-only** trait rows (category, key, value, evidence_count); inactive traits are excluded so the prompt context stays tight
    - 10.2 `recent_turns = format_recent_turns(conversation_history, _SELF_EXTRACT_TURNS=3)` — hardcoded 3 turns
    - 10.3 **(LLM)** `llm_ops.extract_self_candidates(user_message, existing_traits, recent_turns)` [SL:16] → `result.candidates`
-      - Prompt shows existing traits as `category | key: value  (seen Nx)` block
-      - LLM classifies each signal as `new`, `confirm`, or `update`
+      - Prompt shows existing active traits as `category | key: value  (seen Nx)` block
+      - LLM is instructed to return ONLY traits not already captured in the profile, or traits whose value has meaningfully changed — no action classification
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `SelfExtractionResult(candidates=[])`
    - 10.4 Fast path: if `not result.candidates` → return immediately (no DB write)
    - 10.5 Logs debug: `extract: candidates=N`
-   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `(upserted, newly_active)` — see §10a
+   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `upserted: int` — see §10a
    - 10.7 `db.commit()`
-   - 10.8 Logs debug: `traits: upserted=N newly_active=N`
+   - 10.8 Logs debug: `traits: upserted=N`
 
 ---
 
 ### 10a. `accumulate_traits()` [SS:30]
-> Upserts SelfTrait rows per LLM action classification.
+> Pure upsert — the LLM only returns new or changed traits, so every candidate is either a fresh insert or an intentional value update.
 
-   - **No existing row** (treat as `new` regardless of LLM action):
-      - Insert with `is_active=True`, `evidence_count=1`, `confidence_score = candidate.confidence_estimate * 0.6`
+   - **No existing row** (new trait):
+      - Insert with `is_active=True`, `evidence_count=1`, `confidence_score = candidate.confidence_estimate`
       - `first_observed_at = last_observed_at = now`
-   - **Existing row** — action semantics:
-      - `update`: `row.previous_value = row.value; row.value = candidate.value` — value evolved, old value preserved
-      - `confirm`: value unchanged — only strengthen evidence; value untouched
-      - `new` (conflict, row exists): treated as `update`
-      - All paths: `evidence_count += 1`, `is_active = True` (re-activates if consolidator had demoted), `last_observed_at = now`
+   - **Existing row** (value changed):
+      - `row.previous_value = row.value; row.value = candidate.value` — old value preserved in `previous_value`
+      - `evidence_count += 1`, `is_active = True` (re-activates if consolidator had demoted), `last_observed_at = now`
       - `confidence_score = min(1.0, row.confidence_score + 0.1 * candidate.confidence_estimate)`
-   - Returns `(upserted, newly_active)` where `newly_active` counts rows that transitioned from inactive to active
+      - Note: code also handles the case where `row.value == candidate.value` defensively (no value write, evidence still increments) — this should not occur in normal operation since the LLM is instructed not to return already-captured traits
+   - Returns `upserted: int` (count of rows inserted or updated)
 
 ---
 

@@ -13,14 +13,13 @@ from hippomem.models.self_trait import SelfTrait
 from hippomem.memory.self.schemas import ExtractedSelfCandidate
 
 
-def test_accumulate_traits_new_trait_not_active(db):
-    """evidence_count=1, is_active=False, confidence = 0.6 * model_confidence."""
+def test_accumulate_traits_new_trait_is_active(db):
+    """First observation: is_active=True, evidence_count=1, confidence = confidence_estimate."""
     candidates = [
         ExtractedSelfCandidate(
             category="stable_attribute",
             key="occupation",
             value="software engineer",
-            action="new",
             confidence_estimate=0.9,
         ),
     ]
@@ -34,18 +33,17 @@ def test_accumulate_traits_new_trait_not_active(db):
     ).first()
     assert row is not None
     assert row.evidence_count == 1
-    assert row.is_active is False
-    assert abs(row.confidence_score - 0.9 * 0.6) < 0.001
+    assert row.is_active is True
+    assert abs(row.confidence_score - 0.9) < 0.001
 
 
-def test_accumulate_traits_second_observation_activates(db):
-    """evidence_count becomes 2, is_active=True."""
+def test_accumulate_traits_second_observation_increments_evidence(db):
+    """Second observation: evidence_count becomes 2, value unchanged."""
     candidates = [
         ExtractedSelfCandidate(
             category="goal",
             key="career_goal",
             value="building hippomem",
-            action="new",
             confidence_estimate=0.8,
         ),
     ]
@@ -63,6 +61,7 @@ def test_accumulate_traits_second_observation_activates(db):
     assert row is not None
     assert row.evidence_count == 2
     assert row.is_active is True
+    assert row.value == "building hippomem"
 
 
 def test_accumulate_traits_confidence_clamped_at_one(db):
@@ -72,7 +71,6 @@ def test_accumulate_traits_confidence_clamped_at_one(db):
             category="preference",
             key="response_format",
             value="concise",
-            action="confirm",
             confidence_estimate=1.0,
         ),
     ]
@@ -89,42 +87,46 @@ def test_accumulate_traits_confidence_clamped_at_one(db):
     assert row.confidence_score <= 1.0
 
 
-def test_get_existing_traits_returns_full_state(db):
-    """Returns list of {category, key, value, evidence_count} dicts."""
-    for cat, key, val, count in [
-        ("stable_attribute", "occupation", "software engineer", 3),
-        ("goal", "career_goal", "building hippomem", 1),
-    ]:
-        t = SelfTrait(
-            user_id="user1",
-            category=cat,
-            key=key,
-            value=val,
-            evidence_count=count,
-        )
-        db.add(t)
+def test_get_existing_traits_returns_active_only(db):
+    """Returns only active traits: category, key, value, evidence_count."""
+    active = SelfTrait(
+        user_id="user1",
+        category="stable_attribute",
+        key="occupation",
+        value="software engineer",
+        evidence_count=3,
+        is_active=True,
+    )
+    inactive = SelfTrait(
+        user_id="user1",
+        category="goal",
+        key="career_goal",
+        value="old goal",
+        evidence_count=1,
+        is_active=False,
+    )
+    db.add_all([active, inactive])
     db.commit()
 
     result = get_existing_traits("user1", db)
-    assert len(result) == 2
-    by_key = {r["key"]: r for r in result}
-    assert by_key["occupation"]["value"] == "software engineer"
-    assert by_key["occupation"]["evidence_count"] == 3
-    assert by_key["career_goal"]["category"] == "goal"
+    assert len(result) == 1
+    assert result[0]["key"] == "occupation"
+    assert result[0]["value"] == "software engineer"
+    assert result[0]["evidence_count"] == 3
 
 
 def test_accumulate_traits_update_stores_previous_value(db):
-    """action=update → previous_value preserved, new value written."""
+    """When value changes, previous_value is preserved."""
     first = [ExtractedSelfCandidate(
         category="stable_attribute", key="occupation",
-        value="junior engineer", action="new", confidence_estimate=0.8,
+        value="junior engineer", confidence_estimate=0.8,
     )]
     accumulate_traits("user1", first, db)
     db.commit()
 
     second = [ExtractedSelfCandidate(
         category="stable_attribute", key="occupation",
-        value="staff engineer", action="update", confidence_estimate=0.9,
+        value="staff engineer", confidence_estimate=0.9,
     )]
     accumulate_traits("user1", second, db)
     db.commit()
@@ -136,29 +138,33 @@ def test_accumulate_traits_update_stores_previous_value(db):
     assert row.previous_value == "junior engineer"
 
 
-def test_accumulate_traits_confirm_does_not_overwrite_value(db):
-    """action=confirm → value unchanged, evidence strengthened."""
-    first = [ExtractedSelfCandidate(
+def test_accumulate_traits_same_value_no_previous_value(db):
+    """Same value on re-observation: no previous_value set, evidence increments."""
+    candidates = [ExtractedSelfCandidate(
         category="stable_attribute", key="occupation",
-        value="software engineer", action="new", confidence_estimate=0.8,
+        value="software engineer", confidence_estimate=0.8,
     )]
-    accumulate_traits("user1", first, db)
+    accumulate_traits("user1", candidates, db)
     db.commit()
-
-    confirm = [ExtractedSelfCandidate(
-        category="stable_attribute", key="occupation",
-        value="software engineer",  # same value
-        action="confirm", confidence_estimate=0.9,
-    )]
-    accumulate_traits("user1", confirm, db)
+    accumulate_traits("user1", candidates, db)
     db.commit()
 
     row = db.query(SelfTrait).filter(
         SelfTrait.user_id == "user1", SelfTrait.key == "occupation"
     ).first()
     assert row.value == "software engineer"
-    assert row.previous_value is None  # no change recorded
+    assert row.previous_value is None
     assert row.evidence_count == 2
+
+
+def test_accumulate_traits_returns_upserted_count(db):
+    """Return value is an int count of rows upserted."""
+    candidates = [
+        ExtractedSelfCandidate(category="goal", key="k1", value="v1", confidence_estimate=0.8),
+        ExtractedSelfCandidate(category="goal", key="k2", value="v2", confidence_estimate=0.7),
+    ]
+    count = accumulate_traits("user1", candidates, db)
+    assert count == 2
 
 
 def test_get_active_traits_filters_inactive(db):

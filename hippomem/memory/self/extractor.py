@@ -41,7 +41,7 @@ class SelfExtractor:
         )
         logger.debug("extract: candidates=%d", len(result.candidates))
         if not result.candidates:
-            return  # fast path — no self-signals found
-        upserted, newly_active = accumulate_traits(user_id, result.candidates, db)
-        logger.debug("traits: upserted=%d newly_active=%d", upserted, newly_active)
+            return  # fast path — nothing new found
+        upserted = accumulate_traits(user_id, result.candidates, db)
+        logger.debug("traits: upserted=%d", upserted)
         db.commit()
