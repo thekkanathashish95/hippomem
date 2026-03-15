@@ -26,8 +26,7 @@ Signature:
 consolidate_user(user_id, db, enable_episode_consolidation=True,
                  enable_entity_extraction=False,
                  consolidation_llm_ops=None, embedding_service=None,
-                 vector_dir=".hippomem/vectors", enable_self_memory=False,
-                 self_trait_min_confidence=0.5)
+                 vector_dir=".hippomem/vectors", enable_self_memory=False)
 ```
 
 > Decay and demotion are handled entirely by the encoder on each turn — not here.
@@ -47,7 +46,7 @@ Steps (each wrapped in individual try/except; failures are logged, not raised):
 
 **Step 3** — `prune_stale_traits(user_id, db)` → see §7
 
-**Step 4** — `consolidate_self_memory(user_id, db, llm_ops, min_confidence)` → see §8
+**Step 4** — `consolidate_self_memory(user_id, db, llm_ops)` → see §8
 
 ---
 
@@ -151,8 +150,8 @@ Sets `is_active = False`; `db.commit()`. Returns count deactivated.
 ## 8. Self Memory Consolidation — `consolidate_self_memory()` [CS:160]
 > Generates or updates the Persona Engram from active SelfTraits.
 
-1. `get_active_traits(user_id, db)` → filter to `confidence_score >= min_confidence` (default 0.5)
-2. Guard: no qualifying traits → return `False` (no-op)
+1. `get_active_traits(user_id, db)` → all `is_active=True` traits. No confidence filter applied here — activation is the single quality gate, enforced in `accumulate_traits()` at extraction time.
+2. Guard: no active traits → return `False` (no-op)
 3. `compute_traits_hash(traits)` → `sha256(json.dumps(sorted [{category,key,value}]))` — deterministic, order-independent
 4. Query existing `Engram(engram_kind=PERSONA)` for this user
 5. Guard: `persona.content_hash == current_hash` → return `False` (traits unchanged, skip LLM call)

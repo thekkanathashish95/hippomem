@@ -63,7 +63,7 @@
    - 3.8 `_collect_events_for_synthesis()` → `(events_for_synthesis, id_to_uuid, cascade)` — see §6
    - 3.9 Guard: empty `events_for_synthesis` → return empty result `(cascade="C2")`
    - 3.10 `_load_self_profile(user_id, db)` → `(self_profile, source)` — see §8
-      - Logs debug: `self_profile: source=persona|traits|none`
+      - Logs debug: `self_profile: source=persona|persona+pending|traits|none`
    - 3.11 **Entity injection** (only if `enable_entity_extraction`) → `_load_linked_entities(event_uuids, user_id, db)` — see §7
       - `event_uuids` = event_uuid values from `events_for_synthesis` (None values filtered out)
       - Logs debug: `linked_entities: count=N` if any found
@@ -258,12 +258,22 @@
 > Injects identity context into the synthesis prompt (only if `enable_self_memory`).
 
    - Returns `(None, "none")` immediately if `enable_self_memory = False`
-   - Priority 1: Persona `Engram` (`engram_kind=PERSONA`) with `summary_text` → source=`"persona"`
-      - Persona is created/updated by `consolidate_self_memory()` during consolidation
-   - Priority 2: `get_active_traits(user_id, db)` + `format_traits_for_injection(traits)` → source=`"traits"`
-      - Fallback when Persona Engram doesn't exist yet or has no summary_text
-   - Priority 3: `(None, "none")` — self memory disabled, no traits yet, or DB failure
-   - Entire method wrapped in try/except — any DB failure returns `(None, "none")`
+   - **Priority 1**: Persona `Engram` (`engram_kind=PERSONA`) with `summary_text` exists:
+      - Load all active traits → check for any with `last_observed_at > persona.updated_at`
+      - If new traits found: append formatted pending block → source=`"persona+pending"`
+        ```
+        {persona.summary_text}
+
+        **Recently observed (pending consolidation):**
+        [format_traits_for_injection(new_traits)]
+        ```
+      - If no new traits: return `persona.summary_text` alone → source=`"persona"`
+      - Timezone normalization: naive timestamps replaced with UTC before comparison
+   - **Priority 2**: No Persona Engram yet → `get_active_traits()` + `format_traits_for_injection()` → source=`"traits"`
+      - Fallback used before first `consolidate()` call
+   - **Priority 3**: `(None, "none")` — self memory disabled, no active traits, or DB failure
+   - Entire method wrapped in try/except — any failure returns `(None, "none")`
+   - Logs debug: `self_profile: source=persona|persona+pending|traits|none`
 
 ---
 

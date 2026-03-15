@@ -349,33 +349,38 @@
 ## 10. Self extraction — `SelfExtractor.extract_and_accumulate()` [SE:28]
 > Runs last, after entity extraction. Runs regardless of episodic path outcome.
 
-   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load all trait rows for context (category, key, value, evidence_count; not just active)
+   - 10.1 `get_existing_traits(user_id, db)` [SS:13] — load all active trait rows for context (category, key, value, evidence_count)
    - 10.2 `recent_turns = format_recent_turns(conversation_history, _SELF_EXTRACT_TURNS=3)` — hardcoded 3 turns
    - 10.3 **(LLM)** `llm_ops.extract_self_candidates(user_message, existing_traits, recent_turns)` [SL:16] → `result.candidates`
       - Prompt shows existing traits as `category | key: value  (seen Nx)` block
-      - LLM classifies each signal as `new`, `confirm`, or `update`
+      - LLM returns only traits that are **new or changed** relative to the existing profile; includes `confidence_estimate` per candidate
+      - Explicit user instructions ("remember/always/never") are always tagged at `confidence_estimate = 0.9+`
+      - When updating an existing trait, LLM returns the complete merged value (not just the delta)
       - `temperature=0.1`, `max_tokens=4000`; on exception returns `SelfExtractionResult(candidates=[])`
    - 10.4 Fast path: if `not result.candidates` → return immediately (no DB write)
    - 10.5 Logs debug: `extract: candidates=N`
-   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `(upserted, newly_active)` — see §10a
+   - 10.6 `accumulate_traits(user_id, result.candidates, db)` [SS:30] → `upserted` count — see §10a
    - 10.7 `db.commit()`
-   - 10.8 Logs debug: `traits: upserted=N newly_active=N`
+   - 10.8 Logs debug: `traits: upserted=N`
 
 ---
 
 ### 10a. `accumulate_traits()` [SS:30]
-> Upserts SelfTrait rows per LLM action classification.
+> Upserts SelfTrait rows. Activation is gated on confidence threshold or evidence count.
 
-   - **No existing row** (treat as `new` regardless of LLM action):
-      - Insert with `is_active=True`, `evidence_count=1`, `confidence_score = candidate.confidence_estimate * 0.6`
+`HIGH_CONFIDENCE_THRESHOLD = 0.8` — module-level constant.
+
+   - **No existing row**:
+      - Insert with `evidence_count=1`, `confidence_score = candidate.confidence_estimate`
+      - `is_active = (confidence_estimate >= HIGH_CONFIDENCE_THRESHOLD)` — high-confidence traits activate immediately; low-confidence stay inactive until corroborated
       - `first_observed_at = last_observed_at = now`
-   - **Existing row** — action semantics:
-      - `update`: `row.previous_value = row.value; row.value = candidate.value` — value evolved, old value preserved
-      - `confirm`: value unchanged — only strengthen evidence; value untouched
-      - `new` (conflict, row exists): treated as `update`
-      - All paths: `evidence_count += 1`, `is_active = True` (re-activates if consolidator had demoted), `last_observed_at = now`
+   - **Existing row**:
+      - If `row.value != candidate.value`: `row.previous_value = row.value; row.value = candidate.value` — value evolved, old value preserved one level back
+      - `evidence_count += 1`, `last_observed_at = now`
       - `confidence_score = min(1.0, row.confidence_score + 0.1 * candidate.confidence_estimate)`
-   - Returns `(upserted, newly_active)` where `newly_active` counts rows that transitioned from inactive to active
+      - If `not row.is_active`: activate when `evidence_count >= 2` OR `confidence_estimate >= HIGH_CONFIDENCE_THRESHOLD`
+      - Already-active traits: `is_active` unchanged (stays True)
+   - Returns `int` — count of rows upserted
 
 ---
 

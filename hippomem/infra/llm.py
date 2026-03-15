@@ -216,11 +216,13 @@ class LLMService:
         choices = data.get("choices", [])
         if not choices:
             raise LLMError("No choices in LLM response")
+        finish_reason = choices[0].get("finish_reason")
         content = choices[0].get("message", {}).get("content", "")
         if not content or not content.strip():
             raise LLMError("Empty content in structured response")
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as e:
+            logger.error("chat_structured parse failure: op=%s finish_reason=%s content=%r", op, finish_reason, content)
             raise LLMError(f"Structured response is not valid JSON: {e}") from e
         return response_model.model_validate(parsed)
