@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/services/api'
 import type { SelfTrait } from '@/types/memory'
 import { useChatStore } from '@/stores/chatStore'
 import { formatDate } from '@/utils/formatDate'
+import { RefreshButton } from '@/components/common/RefreshButton'
 
 const CATEGORY_LABELS: Record<string, string> = {
   stable_attribute: 'Stable Attributes',
@@ -22,7 +23,7 @@ export function SelfMemoryView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!userId) return
     setLoading(true)
     api.getSelfTraits(userId)
@@ -34,6 +35,8 @@ export function SelfMemoryView() {
       .finally(() => setLoading(false))
   }, [userId])
 
+  useEffect(() => { load() }, [load])
+
   const grouped = CATEGORY_ORDER.reduce<Record<string, SelfTrait[]>>((acc, cat) => {
     const items = traits.filter((t) => t.category === cat)
     if (items.length > 0) acc[cat] = items
@@ -42,9 +45,12 @@ export function SelfMemoryView() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="px-6 py-4 border-b border-border-subtle flex-shrink-0">
-        <h2 className="text-base font-semibold text-text-light">Self Memory</h2>
-        <p className="text-[12px] text-text-muted mt-0.5">What hippomem has learned about you</p>
+      <div className="px-6 py-4 border-b border-border-subtle flex-shrink-0 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-text-light">Self Memory</h2>
+          <p className="text-[12px] text-text-muted mt-0.5">What hippomem has learned about you</p>
+        </div>
+        <RefreshButton onClick={load} isLoading={loading} />
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">

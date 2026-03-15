@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/services/api'
 import type { EntityNode } from '@/types/memory'
 import { useChatStore } from '@/stores/chatStore'
 import { formatDate } from '@/utils/formatDate'
+import { RefreshButton } from '@/components/common/RefreshButton'
 
 const TYPE_LABELS: Record<string, string> = {
   person: 'People',
@@ -81,7 +82,7 @@ export function PersonaView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!userId) return
     setLoading(true)
     api.getEntities(userId)
@@ -92,6 +93,8 @@ export function PersonaView() {
       .catch(() => setError('Failed to load entities.'))
       .finally(() => setLoading(false))
   }, [userId])
+
+  useEffect(() => { load() }, [load])
 
   const grouped = TYPE_ORDER.reduce<Record<string, EntityNode[]>>((acc, type) => {
     const items = entities.filter((e) => e.entity_type === type)
@@ -111,11 +114,14 @@ export function PersonaView() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="px-6 py-4 border-b border-border-subtle flex-shrink-0">
-        <h2 className="text-base font-semibold text-text-light">Entities</h2>
-        <p className="text-[12px] text-text-muted mt-0.5">
-          People, places, and things hippomem has learned about
-        </p>
+      <div className="px-6 py-4 border-b border-border-subtle flex-shrink-0 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-text-light">Entities</h2>
+          <p className="text-[12px] text-text-muted mt-0.5">
+            People, places, and things hippomem has learned about
+          </p>
+        </div>
+        <RefreshButton onClick={load} isLoading={loading} />
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
