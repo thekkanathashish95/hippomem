@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/services/api'
-import type { SelfTrait } from '@/types/memory'
+import type { SelfTrait, Persona } from '@/types/memory'
 import { useChatStore } from '@/stores/chatStore'
 import { formatDate } from '@/utils/formatDate'
 import { RefreshButton } from '@/components/common/RefreshButton'
@@ -12,14 +12,15 @@ const CATEGORY_LABELS: Record<string, string> = {
   preference: 'Preferences',
   constraint: 'Constraints',
   project: 'Projects',
+  social: 'Social',
 }
 
-const CATEGORY_ORDER = ['stable_attribute', 'goal', 'personality', 'preference', 'constraint', 'project']
-
+const CATEGORY_ORDER = ['stable_attribute', 'goal', 'personality', 'preference', 'constraint', 'project', 'social']
 
 export function SelfMemoryView() {
   const { userId } = useChatStore()
   const [traits, setTraits] = useState<SelfTrait[]>([])
+  const [persona, setPersona] = useState<Persona | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -29,6 +30,7 @@ export function SelfMemoryView() {
     api.getSelfTraits(userId)
       .then((res) => {
         setTraits(res.traits)
+        setPersona(res.persona ?? null)
         setError(null)
       })
       .catch(() => setError('Failed to load self traits.'))
@@ -68,6 +70,23 @@ export function SelfMemoryView() {
           </div>
         ) : (
           <div className="space-y-8">
+            {/* Persona narrative */}
+            {persona && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+                    Persona
+                  </h3>
+                  <span className="text-[10px] text-text-muted">
+                    Last synthesized: {formatDate(persona.updated_at)}
+                  </span>
+                </div>
+                <p className="text-[13px] text-text-light leading-relaxed whitespace-pre-wrap">
+                  {persona.summary_text}
+                </p>
+              </div>
+            )}
+
             {Object.entries(grouped).map(([cat, items]) => {
               const active = items.filter((t) => t.is_active)
               const pending = items.filter((t) => !t.is_active)

@@ -57,8 +57,14 @@ export interface SelfTrait {
   last_observed_at: string
 }
 
+export interface Persona {
+  summary_text: string
+  updated_at: string
+}
+
 export interface SelfTraitsResponse {
   traits: SelfTrait[]
+  persona: Persona | null
 }
 
 export interface EntityNode {

@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from hippomem.models.engram import Engram
+from hippomem.models.engram import Engram, EngramKind
 from hippomem.models.engram_link import EngramLink
 from hippomem.models.self_trait import SelfTrait
 from hippomem.models.working_state import WorkingState
@@ -146,7 +146,7 @@ def get_entities_for_explorer(user_id: str, db: Session) -> Dict[str, Any]:
 
 
 def get_self_traits_for_explorer(user_id: str, db: Session) -> Dict[str, Any]:
-    """Return all self traits for the self memory explorer view."""
+    """Return all self traits and the persona engram for the self memory explorer view."""
     rows = db.query(SelfTrait).filter(SelfTrait.user_id == user_id).all()
     traits = []
     for row in rows:
@@ -161,4 +161,21 @@ def get_self_traits_for_explorer(user_id: str, db: Session) -> Dict[str, Any]:
             "first_observed_at": row.first_observed_at.isoformat() if row.first_observed_at else "",
             "last_observed_at": row.last_observed_at.isoformat() if row.last_observed_at else "",
         })
-    return {"traits": traits}
+
+    persona_row = (
+        db.query(Engram)
+        .filter(
+            Engram.user_id == user_id,
+            Engram.engram_kind == EngramKind.PERSONA.value,
+        )
+        .order_by(Engram.updated_at.desc())
+        .first()
+    )
+    persona = None
+    if persona_row and persona_row.summary_text:
+        persona = {
+            "summary_text": persona_row.summary_text,
+            "updated_at": persona_row.updated_at.isoformat() if persona_row.updated_at else "",
+        }
+
+    return {"traits": traits, "persona": persona}

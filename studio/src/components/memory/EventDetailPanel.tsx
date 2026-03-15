@@ -94,11 +94,11 @@ export function EventDetailPanel({ event, isLoading, onClose }: EventDetailPanel
               </div>
             )}
 
-            {/* Consolidated updates */}
+            {/* Consolidated updates / entity facts */}
             {event.updates && event.updates.length > 0 && (
               <div>
                 <h4 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">
-                  Updates
+                  {event.event_kind === 'entity' ? 'Facts' : 'Updates'}
                 </h4>
                 <ul className="space-y-1.5 pl-4 border-l-2 border-border-subtle">
                   {event.updates.map((u, i) => (
