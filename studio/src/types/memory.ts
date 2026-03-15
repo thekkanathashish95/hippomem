@@ -33,6 +33,7 @@ export interface EventDetail {
   core_intent: string
   event_kind: 'episode' | 'summary' | 'entity'
   updates: string[]
+  pending_facts: string[]
   summary_text: string | null
   relevance_score: number
   reinforcement_count: number
@@ -65,6 +66,7 @@ export interface EntityNode {
   canonical_name: string
   entity_type: string
   facts: string[]
+  pending_facts: string[]
   summary_text: string | null
   reinforcement_count: number
   created_at: string

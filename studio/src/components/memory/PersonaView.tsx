@@ -28,44 +28,54 @@ const TYPE_ICONS: Record<string, string> = {
 const TYPE_ORDER = ['person', 'pet', 'organization', 'place', 'project', 'tool', 'other']
 
 
-function EntityCard({ entity }: { entity: EntityNode }) {
+function FactList({ facts, pending = false }: { facts: string[]; pending?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const hasMore = entity.facts.length > 3
+  const hasMore = facts.length > 3
+  const visible = expanded ? facts : facts.slice(0, 3)
 
-  const visibleFacts = expanded ? entity.facts : entity.facts.slice(0, 3)
+  return (
+    <div>
+      {pending && (
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-500/70 mb-1">Pending</p>
+      )}
+      <ul className={`space-y-1 pl-3 border-l-2 ${pending ? 'border-amber-500/30' : 'border-border-subtle'}`}>
+        {visible.map((fact, i) => (
+          <li key={i} className={`text-[12px] leading-snug ${pending ? 'text-text-muted' : 'text-text-light'}`}>
+            {fact}
+          </li>
+        ))}
+      </ul>
+      {hasMore && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="text-[11px] text-primary hover:underline mt-1 ml-3"
+        >
+          {expanded ? 'Show less' : `+${facts.length - 3} more`}
+        </button>
+      )}
+    </div>
+  )
+}
 
+function EntityCard({ entity }: { entity: EntityNode }) {
   return (
     <div className="rounded-lg border border-border-subtle p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-medium text-text-light truncate">{entity.canonical_name}</p>
-          {entity.summary_text && (
-            <p className="text-[12px] text-text-muted mt-0.5 leading-relaxed">{entity.summary_text}</p>
-          )}
-        </div>
+        <p className="text-[13px] font-medium text-text-light truncate">{entity.canonical_name}</p>
         <span className="text-[11px] text-text-muted flex-shrink-0 px-1.5 py-0.5 rounded bg-border-subtle">
           {entity.reinforcement_count}×
         </span>
       </div>
 
-      {visibleFacts.length > 0 && (
-        <ul className="space-y-1">
-          {visibleFacts.map((fact, i) => (
-            <li key={i} className="flex items-start gap-1.5">
-              <span className="text-text-muted mt-[3px] text-[10px]">•</span>
-              <span className="text-[12px] text-text-muted leading-snug">{fact}</span>
-            </li>
-          ))}
-        </ul>
+      {entity.summary_text && (
+        <p className="text-[12px] text-text-muted leading-relaxed">{entity.summary_text}</p>
       )}
 
-      {hasMore && (
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="text-[11px] text-primary hover:underline"
-        >
-          {expanded ? 'Show less' : `+${entity.facts.length - 3} more`}
-        </button>
+      {entity.facts.length > 0 && <FactList facts={entity.facts} />}
+      {entity.pending_facts.length > 0 && <FactList facts={entity.pending_facts} pending />}
+
+      {entity.facts.length === 0 && entity.pending_facts.length === 0 && (
+        <p className="text-[11px] text-text-muted italic">No facts yet.</p>
       )}
 
       <div className="text-[10px] text-text-muted flex gap-3 pt-0.5">

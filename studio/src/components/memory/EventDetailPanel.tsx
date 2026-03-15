@@ -84,7 +84,17 @@ export function EventDetailPanel({ event, isLoading, onClose }: EventDetailPanel
               />
             </div>
 
-            {/* Updates timeline */}
+            {/* Summary (post-consolidation) */}
+            {event.summary_text && (
+              <div className="rounded-md bg-primary/5 border border-primary/20 px-3 py-2">
+                <h4 className="text-[10px] font-semibold uppercase tracking-wider text-primary mb-1.5">
+                  Summary
+                </h4>
+                <p className="text-[12px] text-text-light leading-relaxed">{event.summary_text}</p>
+              </div>
+            )}
+
+            {/* Consolidated updates */}
             {event.updates && event.updates.length > 0 && (
               <div>
                 <h4 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">
@@ -92,9 +102,21 @@ export function EventDetailPanel({ event, isLoading, onClose }: EventDetailPanel
                 </h4>
                 <ul className="space-y-1.5 pl-4 border-l-2 border-border-subtle">
                   {event.updates.map((u, i) => (
-                    <li key={i} className="text-[12px] text-text-light">
-                      {u}
-                    </li>
+                    <li key={i} className="text-[12px] text-text-light">{u}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Pending updates (since last consolidation) */}
+            {event.pending_facts && event.pending_facts.length > 0 && (
+              <div>
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/70 mb-2">
+                  Pending
+                </h4>
+                <ul className="space-y-1.5 pl-4 border-l-2 border-amber-500/30">
+                  {event.pending_facts.map((u, i) => (
+                    <li key={i} className="text-[12px] text-text-muted">{u}</li>
                   ))}
                 </ul>
               </div>
