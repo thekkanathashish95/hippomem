@@ -39,12 +39,12 @@ class BM25Retriever:
     def _get_stop_words(cls) -> set:
         if cls._stop_words is None:
             try:
-                import nltk
-                nltk.download("stopwords", quiet=True)
                 from nltk.corpus import stopwords
                 cls._stop_words = set(stopwords.words("english"))
-            except Exception as e:
-                logger.warning("NLTK stopwords unavailable: %s, using fallback", e)
+            except LookupError:
+                # NLTK stopwords not downloaded — use built-in fallback.
+                # Run `python -m nltk.downloader stopwords` once to enable full list.
+                logger.debug("NLTK stopwords not downloaded, using built-in fallback")
                 cls._stop_words = {
                     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
                     "for", "of", "with", "by", "is", "are", "was", "were", "be",

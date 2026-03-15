@@ -164,6 +164,9 @@ async def lifespan(app: FastAPI):
         print(f"  {_YELLOW}⚠  No API key configured.{_RESET}")
         print(f"  {_DIM}Open {_RESET}\033[36m{_settings_link}\033[0m{_DIM} in Studio  or  add {_RESET}\033[1mLLM_API_KEY\033[0m{_DIM} to a {_RESET}\033[1m.env\033[0m{_DIM} file and restart.{_RESET}")
 
+    print(f"\n  {_DIM}{'─' * 56}{_RESET}")
+    print(f"  {_DIM}Runtime logs{_RESET}\n")
+
     yield
 
     if memory:
