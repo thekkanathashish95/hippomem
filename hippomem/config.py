@@ -117,9 +117,6 @@ class MemoryConfig:
     enable_self_memory: bool = True
     """Extract and track durable user identity signals (goals, preferences, personality)."""
 
-    self_trait_min_confidence: float = 0.5
-    """Minimum confidence_score for a trait to be included in snapshot generation."""
-
     # ── Episode consolidation ─────────────────────────────────────────────────
     enable_episode_consolidation: bool = True
     """Compress accumulated episode update statements during consolidate() runs."""

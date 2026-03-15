@@ -8,13 +8,14 @@ from hippomem.memory.self.service import (
     get_existing_traits,
     compute_traits_hash,
     format_traits_for_injection,
+    HIGH_CONFIDENCE_THRESHOLD,
 )
 from hippomem.models.self_trait import SelfTrait
 from hippomem.memory.self.schemas import ExtractedSelfCandidate
 
 
-def test_accumulate_traits_new_trait_is_active(db):
-    """First observation: is_active=True, evidence_count=1, confidence = confidence_estimate."""
+def test_accumulate_traits_high_confidence_activates_immediately(db):
+    """confidence_estimate >= 0.8 → is_active=True on first observation."""
     candidates = [
         ExtractedSelfCandidate(
             category="stable_attribute",
@@ -35,6 +36,73 @@ def test_accumulate_traits_new_trait_is_active(db):
     assert row.evidence_count == 1
     assert row.is_active is True
     assert abs(row.confidence_score - 0.9) < 0.001
+
+
+def test_accumulate_traits_at_threshold_activates_immediately(db):
+    """confidence_estimate exactly at HIGH_CONFIDENCE_THRESHOLD → is_active=True on first observation."""
+    candidates = [
+        ExtractedSelfCandidate(
+            category="goal",
+            key="career_goal",
+            value="build hippomem",
+            confidence_estimate=HIGH_CONFIDENCE_THRESHOLD,
+        ),
+    ]
+    accumulate_traits("user1", candidates, db)
+    db.commit()
+
+    row = db.query(SelfTrait).filter(
+        SelfTrait.user_id == "user1", SelfTrait.key == "career_goal"
+    ).first()
+    assert row.is_active is True
+    assert row.evidence_count == 1
+
+
+def test_accumulate_traits_low_confidence_stays_inactive(db):
+    """confidence_estimate < 0.8 on first observation → is_active=False."""
+    candidates = [
+        ExtractedSelfCandidate(
+            category="personality",
+            key="thinking_style",
+            value="first principles",
+            confidence_estimate=0.65,
+        ),
+    ]
+    accumulate_traits("user1", candidates, db)
+    db.commit()
+
+    row = db.query(SelfTrait).filter(
+        SelfTrait.user_id == "user1", SelfTrait.key == "thinking_style"
+    ).first()
+    assert row is not None
+    assert row.is_active is False
+    assert row.evidence_count == 1
+
+
+def test_accumulate_traits_low_confidence_second_observation_activates(db):
+    """Low confidence trait activates once evidence_count reaches 2."""
+    candidates = [
+        ExtractedSelfCandidate(
+            category="personality",
+            key="thinking_style",
+            value="first principles",
+            confidence_estimate=0.65,
+        ),
+    ]
+    accumulate_traits("user1", candidates, db)
+    db.commit()
+
+    row = db.query(SelfTrait).filter(
+        SelfTrait.user_id == "user1", SelfTrait.key == "thinking_style"
+    ).first()
+    assert row.is_active is False  # still inactive after first
+
+    accumulate_traits("user1", candidates, db)
+    db.commit()
+
+    db.refresh(row)
+    assert row.is_active is True  # activated after second observation
+    assert row.evidence_count == 2
 
 
 def test_accumulate_traits_second_observation_increments_evidence(db):
@@ -165,6 +233,34 @@ def test_accumulate_traits_returns_upserted_count(db):
     ]
     count = accumulate_traits("user1", candidates, db)
     assert count == 2
+
+
+def test_accumulate_traits_inactive_reactivated_by_high_confidence_update(db):
+    """An inactive low-confidence trait is activated when updated with high confidence."""
+    # First insert: low confidence → inactive
+    candidates = [ExtractedSelfCandidate(
+        category="personality", key="thinking_style",
+        value="first principles", confidence_estimate=0.65,
+    )]
+    accumulate_traits("user1", candidates, db)
+    db.commit()
+
+    row = db.query(SelfTrait).filter(
+        SelfTrait.user_id == "user1", SelfTrait.key == "thinking_style"
+    ).first()
+    assert row.is_active is False
+
+    # Second update: high confidence → activates
+    high_conf = [ExtractedSelfCandidate(
+        category="personality", key="thinking_style",
+        value="thinks from first principles", confidence_estimate=0.9,
+    )]
+    accumulate_traits("user1", high_conf, db)
+    db.commit()
+
+    db.refresh(row)
+    assert row.is_active is True
+    assert row.value == "thinks from first principles"
 
 
 def test_get_active_traits_filters_inactive(db):

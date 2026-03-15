@@ -20,10 +20,15 @@ operations:
       an empty result — that is correct and expected.
 
       Trait categories:
-        stable_attribute — occupation, skills, location, background
+        stable_attribute — occupation, skills, location, background, health context, or any
+                           other factual, durable fact about the user that does not fit a
+                           more specific category below. This is the broad catch-all for
+                           identity facts.
         goal             — long-term career, product, or life goals
         personality      — consistent ways of thinking or approaching problems
-        preference       — format, communication style, depth preferences
+        preference       — format, communication style, depth preferences, and explicit
+                           directives about how the AI should interact with this user
+                           (e.g. "never greet me with good morning", "always use tabs")
         constraint       — structural limits (time, environment, employment)
         project          — the user's active long-running initiatives
         social           — durable relationships with named people in the user's life:
@@ -33,9 +38,55 @@ operations:
                            parent, sibling, mentor, best_friend. Do NOT capture passing
                            mentions of acquaintances or colleagues named only once.
 
-      Extraction quality rules — READ CAREFULLY:
-      - Only extract when the signal is durable, substantial, and clearly stated by
-        the user — not implied, inferred, or incidental.
+      ── Confidence tiers — READ CAREFULLY ───────────────────────────────────────────────
+
+      confidence_estimate reflects how certain you are that this trait is durable and
+      accurately captures what the user expressed. Use the following tiers:
+
+      HIGH (0.8–1.0) — assign when the signal is:
+        - Explicitly and unambiguously stated by the user ("I'm a cardiologist",
+          "I don't like bullet points", "I think from first principles")
+        - An explicit directive the user wants the AI to follow ("never greet me with
+          good morning", "always show code examples", "remember I use dark mode")
+        - A core identity fact that would meaningfully change how an AI responds to
+          this person in almost every session
+        Examples: occupation, strong communication preferences, explicitly stated
+        goals, "remember" / "always" / "never" instructions
+
+      MEDIUM (0.6–0.8) — assign when the signal is:
+        - Clearly implied but not directly stated ("seems to work late hours" from
+          context clues, "appears to prefer brevity" from response patterns)
+        - Stated once with mild uncertainty or hedging
+        - Relevant but not mission-critical for every interaction
+        Examples: inferred preferences, goals mentioned in passing, soft personality signals
+
+      Do NOT return a candidate below 0.6 — if you are that uncertain, omit it entirely.
+
+      ── Explicit user instructions ────────────────────────────────────────────────────
+
+      If the user uses language like "remember", "always", "never", "make sure you",
+      or "don't forget" — this is an explicit memory directive. Always assign
+      confidence_estimate = 0.9 regardless of how it is phrased. These are stated facts,
+      not inferences. Map them to the most appropriate category (usually preference).
+
+      ── Merging rule — CRITICAL ──────────────────────────────────────────────────────
+
+      When returning a CHANGED trait (case b above), the value you return must be the
+      COMPLETE, FINAL content — not just the new addition. Read the existing value,
+      integrate the new signal into it, and return the full merged result.
+
+      WRONG: existing = "concise with bullet points", new signal = "also wants code examples"
+             → returning "with code examples"  ← loses original
+      RIGHT: → returning "concise with bullet points and code examples"
+
+      WRONG: existing = "building hippomem as primary side project", new signal = "also consulting"
+             → returning "also consulting for a startup"  ← loses original
+      RIGHT: → returning "building hippomem as primary side project; consulting for early-stage startup"
+
+      ── Extraction quality rules ─────────────────────────────────────────────────────
+
+      - Only extract when the signal is durable, substantial, and clearly stated or
+        strongly implied — not incidental.
       - Do NOT extract from: one-off emotional states, session-specific context,
         vague or uncertain language, or anything the assistant said.
       - Do NOT force an extraction just because the user mentioned something interesting.
@@ -43,7 +94,6 @@ operations:
       - For projects: capture only the user's RELATIONSHIP to the project
         (e.g. "building hippomem as my primary side project"). Do NOT capture
         technical facts about the project itself — those belong in entity memory.
-      - Skip uncertain inferences (confidence < 0.6).
 
       For the key field: use snake_case. Reuse existing keys when the signal
       matches the same attribute. Only create a new key for a genuinely new dimension.
@@ -79,7 +129,7 @@ operations:
           {{
             "category": "stable_attribute|goal|personality|preference|constraint|project|social",
             "key": "snake_case_key",
-            "value": "the trait or relationship content",
+            "value": "the complete, final trait content (merged if updating an existing trait)",
             "confidence_estimate": 0.0
           }}
         ]

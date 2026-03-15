@@ -4,6 +4,7 @@ C1: Continuation Check → C2: Local Scan → C3: Long-Term Retrieval (if needed
 Returns used_engram_ids for the memory encoder.
 """
 import logging
+from datetime import timezone as _tz
 from typing import Callable, Dict, Any, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -428,17 +429,23 @@ class ContextSynthesizer:
     def _load_self_profile(self, user_id: str, db: Session) -> Tuple[Optional[str], str]:
         """
         Returns (identity_context, source) for the synthesis prompt.
-        source: "persona" | "traits" | "none"
+        source: "persona" | "persona+pending" | "traits" | "none"
 
         Priority:
-        1. Persona Engram summary_text (exists after consolidate() has been called)
-        2. Direct trait injection (fallback — always available if self memory is enabled)
-        3. None (self memory disabled or no traits yet)
+        1. Persona Engram summary_text (exists after consolidate() has been called).
+           If any active traits have last_observed_at > persona.updated_at, those are
+           appended as a pending block so the decoder always has the full current picture
+           even when consolidation hasn't run yet. source="persona+pending".
+        2. Persona alone when all traits are already reflected. source="persona".
+        3. Direct trait injection fallback — used when no Persona Engram exists yet. source="traits".
+        4. None (self memory disabled, no traits yet, or DB failure). source="none".
         """
         if not self.config.enable_self_memory:
             return None, "none"
 
         try:
+            from hippomem.memory.self.service import get_active_traits, format_traits_for_injection
+
             persona = (
                 db.query(Engram)
                 .filter(
@@ -447,12 +454,32 @@ class ContextSynthesizer:
                 )
                 .first()
             )
+
             if persona and persona.summary_text:
+                traits = get_active_traits(user_id, db)
+                persona_ts = persona.updated_at
+
+                if persona_ts is not None and traits:
+                    if persona_ts.tzinfo is None:
+                        persona_ts = persona_ts.replace(tzinfo=_tz.utc)
+                    new_traits = []
+                    for t in traits:
+                        if t.last_observed_at:
+                            t_obs = t.last_observed_at
+                            if t_obs.tzinfo is None:
+                                t_obs = t_obs.replace(tzinfo=_tz.utc)
+                            if t_obs > persona_ts:
+                                new_traits.append(t)
+                    if new_traits:
+                        pending_block = format_traits_for_injection(new_traits)
+                        return (
+                            f"{persona.summary_text}\n\n**Recently observed (pending consolidation):**\n{pending_block}",
+                            "persona+pending",
+                        )
+
                 return persona.summary_text, "persona"
 
-            # Fallback: direct trait injection
-            from hippomem.memory.self.service import get_active_traits, format_traits_for_injection
-
+            # Fallback: direct trait injection when no Persona Engram exists yet
             traits = get_active_traits(user_id, db)
             if traits:
                 return format_traits_for_injection(traits), "traits"

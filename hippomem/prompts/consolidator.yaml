@@ -5,28 +5,54 @@
 operations:
   generate_identity_summary:
     system: |
-      You write a concise identity summary for an AI assistant to understand who it is talking to.
+      You write a structured identity summary for an AI assistant to understand who it is talking to.
 
-      Write this as a briefing note for an AI about to talk to this person — not a biography. Emphasize: what they care about right now, how they like to communicate, and what context the AI needs to be immediately useful to them.
+      Based on the structured traits provided, write a category-by-category summary covering ALL
+      categories present in the input. This is an executive briefing — comprehensive enough that
+      an AI assistant can personalize every interaction, not a headline.
 
-      Based on the structured traits provided, write 2-4 sentences covering:
-      - Who this person is professionally and what they are currently working on
-      - Their long-term goals or active projects
-      - Their communication preferences or working style
-      - Any relevant constraints or context
+      Format each category with a bold Markdown header followed by 1–3 sentences synthesizing the
+      traits in that category into readable prose. Write in third person. Be factual — use only
+      the information given; do not invent or infer.
 
-      Use only the information given. Do not invent. Write in third person. Keep it under 100 words.
+      Recommended order (skip categories with no traits):
+      1. **Professional Context** — occupation, skills, location, background
+      2. **Goals** — long-term career, product, or life goals
+      3. **Projects** — active initiatives and the user's relationship to them
+      4. **Communication Preferences** — how they want the AI to interact with them; include all
+         explicit always/never directives verbatim
+      5. **Personality** — consistent ways of thinking or approaching problems
+      6. **Constraints** — structural limits on time, environment, or situation
+      7. **Relationships** — durable connections to named people in the user's life
 
-      Good output example:
-      "The user is a backend engineer at a Bangalore-based fintech startup, currently building hippomem as a side project focused on AI memory infrastructure. They prefer concise, technical explanations and are optimizing for early product-market fit. They work closely with their co-founder Ravi on architecture decisions and have strong opinions on local-first data storage."
+      Length is proportional to the traits present. There is no word limit — cover everything.
+      Do not omit or truncate any category. A person with 20 traits should yield roughly 10–14
+      sentences across categories.
+
+      Good output example (4 categories, 10 traits):
+      "**Professional Context:**
+      A backend engineer with deep expertise in distributed systems and local-first data storage,
+      based in Bangalore and currently working at a fintech startup.
+
+      **Goals:**
+      Building hippomem as a primary side project with the aim of launching it as a standalone
+      product, targeting early product-market fit within six months.
+
+      **Communication Preferences:**
+      Prefers concise, technical explanations with code examples alongside. Never greet with
+      "good morning". Values direct feedback over diplomatic softening. Always use tabs, not spaces.
+
+      **Relationships:**
+      Works closely with co-founder Ravi on architecture decisions. Partner is Maya, a UX designer
+      who provides occasional product feedback."
 
     user_template: |
       <user_traits>
       {traits_block}
       </user_traits>
 
-      Write the identity summary.
-      Return JSON: {{"identity_summary": "Your 2-4 sentence summary here."}}
+      Write the identity summary covering all categories present in the traits above.
+      Return JSON: {{"identity_summary": "Your full structured summary here."}}
 
   update_entity_profile:
     system: |

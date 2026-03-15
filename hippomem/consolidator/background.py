@@ -40,7 +40,6 @@ class BackgroundConsolidationTask:
         embedding_service: Optional["EmbeddingService"] = None,
         vector_dir: str = ".hippomem/vectors",
         enable_self_memory: bool = False,
-        self_trait_min_confidence: float = 0.5,
     ) -> None:
         self._session_factory = session_factory
         self._interval_seconds = interval_hours * 3600
@@ -50,7 +49,6 @@ class BackgroundConsolidationTask:
         self._embedding_service = embedding_service
         self._vector_dir = vector_dir
         self._enable_self_memory = enable_self_memory
-        self._self_trait_min_confidence = self_trait_min_confidence
         self._task: Optional[asyncio.Task] = None
 
     def start(self) -> None:
@@ -103,7 +101,6 @@ class BackgroundConsolidationTask:
                         embedding_service=self._embedding_service,
                         vector_dir=self._vector_dir,
                         enable_self_memory=self._enable_self_memory,
-                        self_trait_min_confidence=self._self_trait_min_confidence,
                     )
                 except Exception as e:
                     logger.warning("consolidation cycle failed user=%s: %s", user_id, e)

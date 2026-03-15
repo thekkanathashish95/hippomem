@@ -224,7 +224,6 @@ class MemoryService:
             embedding_service=self._emb_svc,
             vector_dir=self.config.vector_dir,
             enable_self_memory=self.config.enable_self_memory,
-            self_trait_min_confidence=self.config.self_trait_min_confidence,
         )
         self._bg_consolidation.start()
 
@@ -294,7 +293,6 @@ class MemoryService:
                 embedding_service=self._emb_svc,
                 vector_dir=self.config.vector_dir,
                 enable_self_memory=self.config.enable_self_memory,
-                self_trait_min_confidence=self.config.self_trait_min_confidence,
             )
             logger.info("consolidate: user=%s", user_id)
             self._persist_interaction("consolidate", user_id, collector, db)

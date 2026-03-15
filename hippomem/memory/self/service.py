@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from hippomem.models.self_trait import SelfTrait
 from hippomem.memory.self.schemas import ExtractedSelfCandidate
 
+# Traits with confidence_estimate >= this threshold activate immediately on first observation.
+# Below this threshold, a trait requires evidence_count >= 2 before becoming active.
+HIGH_CONFIDENCE_THRESHOLD = 0.8
+
 
 def get_existing_traits(user_id: str, db: Session) -> List[Dict[str, str]]:
     """
@@ -36,6 +40,11 @@ def accumulate_traits(
     Upsert SelfTrait rows from LLM-extracted candidates.
     The LLM only returns traits that are new or changed, so every candidate
     is either a fresh insert or an update to an existing value.
+
+    Activation rule:
+    - confidence_estimate >= HIGH_CONFIDENCE_THRESHOLD (0.8): activate immediately
+    - below threshold: activate once evidence_count reaches 2
+
     Returns the number of rows upserted.
     """
     now = datetime.now(timezone.utc)
@@ -60,7 +69,7 @@ def accumulate_traits(
                 previous_value=None,
                 confidence_score=c.confidence_estimate,
                 evidence_count=1,
-                is_active=True,
+                is_active=c.confidence_estimate >= HIGH_CONFIDENCE_THRESHOLD,
                 first_observed_at=now,
                 last_observed_at=now,
             )
@@ -71,8 +80,12 @@ def accumulate_traits(
                 row.value = c.value
             row.confidence_score = min(1.0, row.confidence_score + 0.1 * c.confidence_estimate)
             row.evidence_count += 1
-            row.is_active = True
             row.last_observed_at = now
+            if not row.is_active:
+                row.is_active = (
+                    row.evidence_count >= 2
+                    or c.confidence_estimate >= HIGH_CONFIDENCE_THRESHOLD
+                )
         upserted += 1
     return upserted
 

@@ -161,10 +161,12 @@ def consolidate_self_memory(
     user_id: str,
     db: Session,
     llm_ops: "ConsolidationLLMOps",
-    min_confidence: float = 0.5,
 ) -> bool:
     """
     Generate or update the persona Engram for a user from their active SelfTraits.
+
+    Uses all active traits. Activation is the single quality gate — enforced in
+    accumulate_traits() at extraction time.
 
     Returns True if the persona Engram was updated, False if traits unchanged.
     """
@@ -173,10 +175,7 @@ def consolidate_self_memory(
     from hippomem.models.engram import Engram, EngramKind
     from hippomem.memory.self.service import get_active_traits, compute_traits_hash
 
-    traits = [
-        t for t in get_active_traits(user_id, db)
-        if t.confidence_score >= min_confidence
-    ]
+    traits = get_active_traits(user_id, db)
     if not traits:
         return False
 
@@ -215,6 +214,7 @@ def consolidate_self_memory(
             content_hash=current_hash,
             relevance_score=1.0,
             last_decay_applied_at=now,
+            updated_at=now,  # explicit — required for stale-trait detection in _load_self_profile
         )
         db.add(persona)
     else:
@@ -236,7 +236,6 @@ def consolidate_user(
     embedding_service: Optional["EmbeddingService"] = None,
     vector_dir: str = ".hippomem/vectors",
     enable_self_memory: bool = False,
-    self_trait_min_confidence: float = 0.5,
 ) -> None:
     """
     Run all periodic maintenance for a single user.
@@ -286,7 +285,6 @@ def consolidate_user(
                 user_id,
                 db,
                 consolidation_llm_ops,
-                min_confidence=self_trait_min_confidence,
             )
             logger.debug("self_memory: user=%s persona_updated=%s", user_id, persona_updated)
         except Exception as e:
