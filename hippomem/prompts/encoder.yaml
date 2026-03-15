@@ -20,6 +20,7 @@ operations:
       - Ignore greetings, acknowledgements, small talk, and repetition.
       - When refining core_intent: only do so if clarity improves meaningfully. Do NOT change the topic category.
       - Write updates as declarative facts, not conversation narration. Omit speaker attribution.
+      - Each update must be 1–2 sentences, 30 words maximum. Be specific and concise.
       - Return only valid JSON. No explanations.
 
       The guiding question for every update is: "If someone who cares about this user read this conversation, what would they want to remember for next time?" Capture accordingly — not just facts, but things that give context to who the user is, what they care about, and where they are in their journey.
