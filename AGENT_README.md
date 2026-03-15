@@ -145,7 +145,7 @@ Called **after** each LLM response. Updates the memory store with what happened.
 - **Codeflow**: `docs/codeflows/encode.md`
 
 ### `consolidate(user_id) → None`
-Called **periodically** (not every turn). Applies decay to all engrams, demotes low-strength memories from working state, clusters related episodic memories into summary engrams, enriches entities, and synthesizes a persona narrative from accumulated `SelfTrait` rows → `Engram(kind=persona)`. Can run as a background asyncio task when `enable_background_consolidation=True`.
+Called **periodically** (not every turn). Runs four maintenance steps in order: (1) compresses accumulated pending episode update statements into each episode's clean consolidated baseline; (2) enriches entity profiles by merging pending facts and updating summaries; (3) prunes stale self-traits; (4) synthesizes all active self-traits into a structured identity Persona `Engram(kind=persona)`. Decay and demotion are handled by the encoder on each turn — not here. Can run as a background asyncio task when `enable_background_consolidation=True`.
 
 - **Main module**: `hippomem/consolidator/service.py` (`ConsolidationService`)
 - **Codeflow**: `docs/codeflows/consolidate.md`
@@ -164,7 +164,7 @@ Called **periodically** (not every turn). Applies decay to all engrams, demotes 
 
 **Entity** — named individuals (people, pets, organizations) encountered in conversations. Stored as `Engram(kind="entity")` with `EngramLink(kind="mention")` edges connecting entities to the episodes that mention them. Entity extraction runs during `encode()` via `memory/entity/llm_ops.py`.
 
-**Self / Persona** — stable user identity signals accumulated across turns. Raw signals are stored as `SelfTrait` rows (incremental, additive). `consolidate()` periodically synthesizes them into a unified `Engram(kind="persona")` narrative that gets injected into decode context as background context about the user.
+**Self / Persona** — stable user identity signals accumulated across turns. Raw signals are stored as `SelfTrait` rows. Extraction is confidence-gated: `confidence >= 0.8` activates immediately; `0.6–0.8` stays inactive until a second independent observation; `< 0.6` is skipped entirely. `consolidate()` synthesizes all active traits into a structured identity `Engram(kind="persona")` — category-by-category Markdown, proportional length, no word limit — injected into decode context. Traits observed after the last consolidation are appended inline by the decoder as a pending block, so fresh signals are visible immediately without waiting for the next consolidation run.
 
 ---
 

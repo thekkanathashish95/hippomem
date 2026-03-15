@@ -190,7 +190,7 @@ hippomem uses a cascade of LLM-powered steps inspired by how the hippocampus enc
 
 - **decode** (before your LLM call): checks recent context continuity → retrieves relevant memory → synthesizes a context string ready to inject into your system prompt
 - **encode** (after your LLM response): extracts new information → creates or updates memory engrams → links related memories via graph edges → updates entity and self-memory if enabled
-- **consolidate** (periodic): decays stale memories, promotes important ones, clusters related memories into summaries
+- **consolidate** (periodic): compresses accumulated episode facts into clean baselines, enriches entity profiles, prunes stale self-traits, and synthesizes active user signals into a structured identity persona
 - **retrieve** (optional): direct search API that returns raw structured results — episodes with linked entities and graph-connected neighbors — independent of the decode/encode lifecycle
 
 ---
