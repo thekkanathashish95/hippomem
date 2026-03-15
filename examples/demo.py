@@ -1,18 +1,17 @@
 """
-hippomem demo — decode / encode / consolidate loop.
+hippomem demo — decode / encode / consolidate / retrieve.
 
 Usage:
     export LLM_API_KEY=sk-...
     python examples/demo.py
 
-This demo simulates a 3-turn conversation and prints memory context at each turn.
-No actual LLM calls — uses a mock response to demonstrate the memory update cycle.
+This demo simulates a 3-turn conversation and exercises all four core API calls.
 
 Core API:
-    memory.decode(user_id, message, ...)  → retrieve relevant memory context
-    memory.encode(user_id, msg, reply, decode_result, ...)  → store the turn
-    memory.consolidate(user_id)           → run decay / clustering maintenance
-    memory.retrieve(user_id, query, ...)  → raw semantic search (optional)
+    memory.decode(user_id, message, ...)           → retrieve and synthesize memory context
+    memory.encode(user_id, msg, reply, result, ...) → store the completed turn
+    memory.consolidate(user_id)                    → periodic maintenance (compression, persona)
+    memory.retrieve(user_id, query, ...)           → raw structured search, no LLM synthesis
 """
 import asyncio
 import os
@@ -45,9 +44,10 @@ async def main():
     base_url = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
     model = os.environ.get("LLM_MODEL")
 
+    _here = os.path.dirname(os.path.abspath(__file__))
     config = MemoryConfig(
-        db_url="sqlite:///demo_memory.db",
-        vector_dir="./demo_vectors",
+        db_url=f"sqlite:///{os.path.join(_here, 'demo_memory.db')}",
+        vector_dir=os.path.join(_here, "demo_vectors"),
     )
     if model:
         config.llm_model = model
@@ -77,9 +77,6 @@ async def main():
             )
             history.append((user_msg, assistant_msg))
 
-            # Give background encode time to complete (not needed in production)
-            await asyncio.sleep(3)
-
         # Third turn — demonstrate decode with real memory
         user_msg = CONVERSATION[2][0]
         print(f"User: {user_msg}\n")
@@ -93,9 +90,29 @@ async def main():
         else:
             print("[No memory context — either LLM keys are not set or memory is empty]")
 
-        # Run consolidation — decay stale events and cluster related ones.
-        # Call this periodically in production (e.g. daily, or after N turns).
-        print("\n=== Running consolidation ===")
+        # retrieve() — raw structured search, independent of the decode/encode lifecycle.
+        # No LLM calls are made; returns episodes with linked entities and graph neighbours.
+        # Use this to power search UIs or query memory outside of a conversation turn.
+        print("\n=== retrieve(): raw structured search ===")
+        search = await memory.retrieve(user_id, "JWT authentication approach", mode="hybrid", top_k=3)
+        print(f"Found {search.total_primary} primary episode(s).\n")
+        for ep in search.episodes:
+            print(f"  [{ep.source}  score={ep.score:.2f}]  {ep.core_intent}")
+            if ep.updates:
+                for fact in ep.updates[:3]:
+                    print(f"    • {fact}")
+            if ep.entities:
+                names = ", ".join(e.core_intent for e in ep.entities)
+                print(f"    entities: {names}")
+            if ep.related_episodes:
+                related = ", ".join(r.core_intent for r in ep.related_episodes)
+                print(f"    related:  {related}")
+            print()
+
+        # consolidate() — periodic maintenance: compresses episode facts, enriches entity
+        # profiles, prunes stale self-traits, and regenerates the persona engram.
+        # Call on a schedule (e.g. daily) or after a fixed number of turns.
+        print("=== consolidate(): periodic maintenance ===")
         await memory.consolidate(user_id)
         print("Consolidation complete.")
 
