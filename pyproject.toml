@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hippomem"
-version = "0.2.0"
+version = "0.3.0"
 description = "Brain-inspired persistent memory layer for AI applications"
 readme = "README.md"
 requires-python = ">=3.11"

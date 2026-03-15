@@ -21,7 +21,7 @@ from hippomem.decoder.schemas import DecodeResult
 from hippomem.config import MemoryConfig
 from hippomem.retrieve.schemas import RetrieveResult, RetrievedEpisode, RetrievedEntity
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "MemoryService",
     "DecodeResult",
