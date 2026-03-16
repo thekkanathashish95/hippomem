@@ -21,6 +21,10 @@ All stored locally in SQLite + FAISS. No data leaves your machine.
 
 hippomem does not try to remember everything. Unlike a fact store or a rolling message log, it is modeled on how human memory actually works: selective, lossy, and shaped by relevance. Memories that are used get reinforced; memories that go untouched decay. The hypothesis hippomem is built on is that this lossiness is not a weakness — it is what makes memory useful. A system that forgets selectively surfaces what matters, rather than drowning every response in accumulated context.
 
+📄 **[Technical paper](https://github.com/thekkanathashish95/hippomem/blob/main/docs/guides/hippomem-technical-paper-v8.pdf)**
+
+▶️ **[Product demo](https://youtu.be/LbgI9VP6F9U)**
+
 ---
 
 > **Note:** hippomem is an actively evolving open-source project. It is functional and being used, but you should expect rough edges in both the implementation and documentation. If you find gaps or bugs, please raise a GitHub issue or open a pull request — contributions will directly shape what gets built next.
