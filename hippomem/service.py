@@ -44,7 +44,7 @@ from hippomem.models.self_trait import SelfTrait  # noqa: F401 — registers tab
 from hippomem.models.turn_status import TurnStatus  # noqa: F401 — registers table
 from hippomem.models.conversation_turn import ConversationTurn
 from hippomem.models.conversation_turn_engram import ConversationTurnEngram
-from hippomem.models.llm_interaction import LLMCallLog, LLMInteraction  # noqa: F401 — registers tables
+from hippomem.models.llm_interaction import LLMCallLog, LLMInteraction
 from hippomem import explorer, sessions
 
 logger = logging.getLogger(__name__)
@@ -613,7 +613,6 @@ class MemoryService:
         on_step: Optional[Callable[[str], None]] = None,
     ) -> None:
         from hippomem.infra.call_collector import _current_collector, LLMCallCollector
-        from hippomem.models.llm_interaction import LLMInteraction
 
         collector = LLMCallCollector()
         token = _current_collector.set(collector)
@@ -955,8 +954,6 @@ class MemoryService:
         if not collector.records:
             return
         try:
-            from hippomem.models.llm_interaction import LLMInteraction, LLMCallLog
-
             usage = collector.usage
             interaction = LLMInteraction(
                 id=str(uuid.uuid4()),

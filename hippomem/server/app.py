@@ -33,7 +33,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -202,11 +202,14 @@ async def _bearer_auth(request, call_next):
         protected = False
     if request.method == "OPTIONS" or first in ("health", "assets") or not path:
         return await call_next(request)
-    if protected and tokens_configured():
-        request.state.auth = context_from_request(request)
-    elif protected:
-        from hippomem.server.auth import AuthContext
-        request.state.auth = AuthContext(name="anonymous", namespace="*", is_admin=True)
+    try:
+        if protected and tokens_configured():
+            request.state.auth = context_from_request(request)
+        elif protected:
+            from hippomem.server.auth import AuthContext
+            request.state.auth = AuthContext(name="anonymous", namespace="*", is_admin=True)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -518,9 +521,9 @@ async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
 @app.post("/decode", response_model=DecodeResponse)
 async def decode_endpoint(req: DecodeRequest, request: Request) -> DecodeResponse:
     """Decode endpoint for HippoMemClient — retrieve memory context before LLM call."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
-    require_user(_auth(request), req.user_id)
     raw = req.conversation_history or []
     history = [tuple(pair) for pair in raw]  # type: ignore[misc]
     result = await memory.decode(
@@ -535,9 +538,9 @@ async def decode_endpoint(req: DecodeRequest, request: Request) -> DecodeRespons
 @app.post("/encode", response_model=EncodeResponse)
 async def encode_endpoint(req: EncodeRequest, request: Request) -> EncodeResponse:
     """Encode endpoint for HippoMemClient — update memory after LLM response."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
-    require_user(_auth(request), req.user_id)
     raw = req.conversation_history or []
     history = [tuple(pair) for pair in raw]  # type: ignore[misc]
     decode_result = _decode_response_to_result(req.decode_result)
@@ -555,9 +558,9 @@ async def encode_endpoint(req: EncodeRequest, request: Request) -> EncodeRespons
 @app.post("/consolidate")
 async def consolidate_endpoint(req: ConsolidateRequest, request: Request) -> dict:
     """Consolidate endpoint for HippoMemClient — run periodic memory maintenance."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
-    require_user(_auth(request), req.user_id)
     await memory.consolidate(req.user_id)
     return {"status": "ok"}
 
@@ -565,9 +568,9 @@ async def consolidate_endpoint(req: ConsolidateRequest, request: Request) -> dic
 @app.post("/retrieve")
 async def retrieve_endpoint(req: RetrieveRequest, request: Request) -> dict:
     """Retrieve raw episodes by query. Mode: faiss | bm25 | hybrid."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
-    require_user(_auth(request), req.user_id)
     from hippomem.retrieve.schemas import retrieve_result_to_dict
 
     result = await memory.retrieve(

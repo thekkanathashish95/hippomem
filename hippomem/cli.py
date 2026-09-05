@@ -20,7 +20,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "serve":
-        if args.host in ("0.0.0.0", "::", "[::]"):
+        if args.host in ("0.0.0.0", "::", "[::]"):  # nosec B104 — refuse wildcard bind without a token
             if not (os.environ.get("HIPPOMEM_API_TOKEN") or os.environ.get("HIPPOMEM_TOKENS")):
                 print(
                     "Refusing to bind a non-loopback address without HIPPOMEM_API_TOKEN "
