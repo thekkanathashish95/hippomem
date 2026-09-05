@@ -5,7 +5,7 @@ Single authority for relevance score decay on active events.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from hippomem.models.working_state import WorkingState
@@ -395,7 +395,7 @@ def consolidate_episode_facts(
     Returns count of episodes consolidated.
     """
     from hippomem.infra.vector.faiss_service import FAISSService
-    from hippomem.infra.vector.embedding import compute_content_hash, add_to_faiss_realtime, embed_engram
+    from hippomem.infra.vector.embedding import add_to_faiss_realtime, embed_engram
 
     episode_rows = db.query(Engram).filter(
         Engram.user_id == user_id,

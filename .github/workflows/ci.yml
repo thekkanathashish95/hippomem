@@ -1,0 +1,44 @@
+# Wave 1.1 — keep main green. pip-audit is informational until NLTK is removed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check hippomem tests
+
+      - name: Tests
+        run: pytest tests -q --tb=short
+
+      - name: Bandit
+        run: bandit -r hippomem -ll
+
+      - name: pip-audit (non-blocking until NLTK is dropped)
+        continue-on-error: true
+        run: pip-audit

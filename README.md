@@ -1,5 +1,6 @@
 # hippomem
 
+[![CI](https://github.com/thekkanathashish95/hippomem/actions/workflows/ci.yml/badge.svg)](https://github.com/thekkanathashish95/hippomem/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/hippomem)](https://pypi.org/project/hippomem/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hippomem)](https://pypi.org/project/hippomem/)
 [![Downloads](https://img.shields.io/pypi/dm/hippomem)](https://pypi.org/project/hippomem/)

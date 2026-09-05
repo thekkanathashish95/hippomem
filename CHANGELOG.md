@@ -4,6 +4,17 @@ All notable changes to hippomem are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+- GitHub Actions CI on Python 3.11 and 3.12: pytest, ruff, bandit. `pip-audit` runs but does not fail the build yet (NLTK advisory).
+
+### Fixed
+- `Dict` was used without import in `consolidator/service.py` (runtime `NameError` on the persona-summary path).
+- Unused `compute_content_hash` import in the same module.
+
+---
+
 ## [0.3.0] - 2026-03-15
 
 ### Added
