@@ -140,7 +140,7 @@ export function ConnectionSection() {
             </p>
           )}
           <p className="text-[12px] text-text-muted mt-1">
-            This key is stored locally and only used to make API requests from hippomem.
+            The key is kept in a 0600 secrets file or the LLM_API_KEY environment variable — never in hippomem_config.json.
           </p>
         </FieldWithTooltip>
 

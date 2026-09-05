@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { studioError } from '@/lib/errors'
 import { api } from '@/services/api'
 import type { MemoryNode, MemoryEdge, EventDetail } from '@/types/memory'
 
@@ -34,7 +35,7 @@ export const useMemoryStore = create<MemoryStore>((set) => ({
       console.error('Failed to fetch memory graph:', err)
       set({
         isLoading: false,
-        error: 'Failed to load memory. Is the hippomem server running?',
+        error: studioError('Failed to load memory', err),
       })
     }
   },

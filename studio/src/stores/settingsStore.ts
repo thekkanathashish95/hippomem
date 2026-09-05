@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { studioError } from '@/lib/errors'
 import { api } from '@/services/api'
 import type { ConfigResponse, ConfigPatch } from '@/types/settings'
 
@@ -50,7 +51,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       console.error('Failed to fetch config:', err)
       set({
         isLoading: false,
-        error: 'Failed to load settings. Is the hippomem server running?',
+        error: studioError('Failed to load settings', err),
       })
     }
   },

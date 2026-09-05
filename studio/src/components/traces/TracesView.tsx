@@ -24,7 +24,7 @@ export function TracesView() {
   }, [userId, fetchTraces])
 
   const handleRowClick = (interactionId: string) => {
-    fetchInteractionDetail(interactionId)
+    fetchInteractionDetail(interactionId, userId)
   }
 
   return (

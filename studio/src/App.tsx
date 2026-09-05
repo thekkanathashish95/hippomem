@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route, useNavigate } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { SessionSidebar } from '@/components/layout/SessionSidebar'
 import { ChatLayout } from '@/components/layout/ChatLayout'
@@ -35,7 +35,8 @@ function App() {
         <div className="flex h-screen w-full overflow-hidden bg-pure-black">
           <SessionSidebar />
           <Routes>
-            <Route path="/" element={<SetupGuard />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<SetupGuard />} />
             <Route path="/chat" element={<ChatLayout />} />
             <Route path="/memory" element={<MemoryLayout />} />
             <Route path="/self" element={<SelfLayout />} />

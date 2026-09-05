@@ -139,7 +139,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // Polling fallback: check DB for encode status
           if (currentTurnId) {
             try {
-              const entries = await api.getTurnStatus(currentTurnId)
+              const entries = await api.getTurnStatus(currentTurnId, get().userId)
               const enc = entries.find((e) => e.phase === 'encode')
               if (enc?.status === 'done') {
                 set({ encodeStatus: 'done', encodeStep: null })
@@ -184,7 +184,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           encodeStatus: 'idle',
           encodeStep: null,
           lastFailedMessage: content,
-          error: 'Failed to get a response. Is the hippomem server running?',
+          error: 'Failed to get a response. Confirm the server is running, an LLM API key is set, and a daemon token is present in Settings if required.',
         })
       },
     })
