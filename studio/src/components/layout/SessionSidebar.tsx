@@ -19,7 +19,7 @@ export function SessionSidebar() {
 
       <div className="flex-1 overflow-y-auto py-3 px-4">
         <div className="pl-2 space-y-0.5">
-          <NavLink to="/" className={navLinkClass}>
+          <NavLink to="/dashboard" className={navLinkClass}>
             <span className="material-symbols-outlined !text-lg">home</span>
             Dashboard
           </NavLink>

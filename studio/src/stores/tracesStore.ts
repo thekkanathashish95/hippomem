@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { studioError } from '@/lib/errors'
 import { api } from '@/services/api'
 import type { InteractionSummary, InteractionDetail } from '@/types/traces'
 
@@ -9,7 +10,7 @@ interface TracesStore {
   isLoadingDetail: boolean
   error: string | null
   fetchTraces: (userId: string, limit?: number) => Promise<void>
-  fetchInteractionDetail: (interactionId: string) => Promise<void>
+  fetchInteractionDetail: (interactionId: string, userId: string) => Promise<void>
   clearSelection: () => void
 }
 
@@ -29,15 +30,15 @@ export const useTracesStore = create<TracesStore>((set) => ({
       console.error('Failed to fetch traces:', err)
       set({
         isLoading: false,
-        error: 'Failed to load traces. Is the hippomem server running?',
+        error: studioError('Failed to load traces', err),
       })
     }
   },
 
-  fetchInteractionDetail: async (interactionId: string) => {
+  fetchInteractionDetail: async (interactionId: string, userId: string) => {
     set({ isLoadingDetail: true })
     try {
-      const detail = await api.getTraceDetail(interactionId)
+      const detail = await api.getTraceDetail(interactionId, userId)
       set({ selectedInteraction: detail, isLoadingDetail: false })
     } catch (err) {
       console.error('Failed to fetch interaction detail:', err)

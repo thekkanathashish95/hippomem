@@ -128,6 +128,11 @@ class MemoryConfig:
     updater_entity_extract_turns: int = 4
     """Recent turns passed as context to the entity extraction LLM call."""
 
+    store_raw_llm_prompts: bool = False
+    """If False, inspector call logs store empty messages/responses (default)."""
+
+    inspector_ttl_days: int = 7
+    """Delete inspector traces older than this many days. 0 disables pruning."""
 
     # ── Turn linking ──────────────────────────────────────────────────────────
     turn_link_max_age_seconds: int = 600

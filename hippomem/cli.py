@@ -4,6 +4,8 @@
 def main() -> None:
     import argparse
     import logging
+    import os
+    import sys
     from logging.handlers import TimedRotatingFileHandler
     from pathlib import Path
     import uvicorn
@@ -18,6 +20,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "serve":
+        if args.host in ("0.0.0.0", "::", "[::]"):  # nosec B104 — refuse wildcard bind without a token
+            if not (os.environ.get("HIPPOMEM_API_TOKEN") or os.environ.get("HIPPOMEM_TOKENS")):
+                print(
+                    "Refusing to bind a non-loopback address without HIPPOMEM_API_TOKEN "
+                    "or HIPPOMEM_TOKENS. Set a token, or bind 127.0.0.1.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(2)
+
         # ── Logging ───────────────────────────────────────────────────────────
         log_dir = Path(".hippomem")
         log_dir.mkdir(exist_ok=True)

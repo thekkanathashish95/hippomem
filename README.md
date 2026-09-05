@@ -1,5 +1,6 @@
 # hippomem
 
+[![CI](https://github.com/thekkanathashish95/hippomem/actions/workflows/ci.yml/badge.svg)](https://github.com/thekkanathashish95/hippomem/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/hippomem)](https://pypi.org/project/hippomem/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hippomem)](https://pypi.org/project/hippomem/)
 [![Downloads](https://img.shields.io/pypi/dm/hippomem)](https://pypi.org/project/hippomem/)
@@ -17,7 +18,7 @@ This is the first step toward that vision. Today, hippomem gives individual AI a
 - **Entity memory** — people, pets, and organizations the user mentions
 - **Self memory** — stable traits and facts about the user (e.g. job, location, habits)
 
-All stored locally in SQLite + FAISS. No data leaves your machine.
+Memories are stored locally in SQLite + FAISS. **This is local-first, not air-gapped:** decode, encode, and consolidation send prompts to your configured LLM provider. Treat retrieved context as untrusted user data — it can contain whatever was said in past conversations.
 
 hippomem does not try to remember everything. Unlike a fact store or a rolling message log, it is modeled on how human memory actually works: selective, lossy, and shaped by relevance. Memories that are used get reinforced; memories that go untouched decay. The hypothesis hippomem is built on is that this lossiness is not a weakness — it is what makes memory useful. A system that forgets selectively surfaces what matters, rather than drowning every response in accumulated context.
 
@@ -91,14 +92,26 @@ Use `HippoMemClient` to connect from any application:
 ```python
 from hippomem.client import HippoMemClient
 
-async with HippoMemClient("http://localhost:8719") as mem:
+async with HippoMemClient("http://localhost:8719", token="your-daemon-token") as mem:
     result = await mem.decode("user_123", "What was I working on?")
     # inject result.context into your LLM system prompt
     response = await your_llm(system=result.context, message=user_message)
     await mem.encode("user_123", user_message, response, decode_result=result)
 ```
 
-`HippoMemClient` is included in the standard `pip install hippomem`.
+`token` is optional. You can omit it, or let `HippoMemClient` read `HIPPOMEM_API_TOKEN`. `HippoMemClient` is included in the standard `pip install hippomem`.
+
+### Daemon auth (optional)
+
+Tokens are an opt-in layer for the HTTP daemon only. In-process library mode (`MemoryService`) does not use them. You create the strings yourself in `.env` — hippomem does not issue tokens.
+
+- If neither `HIPPOMEM_API_TOKEN` nor `HIPPOMEM_TOKENS` is set, the daemon accepts unauthenticated calls (normal local-dev on `127.0.0.1`).
+- Once either is set, protected API routes require `Authorization: Bearer <token>`. `/health` and Studio static assets stay public.
+- `HIPPOMEM_API_TOKEN` is a single admin token: every `user_id`, plus config writes and user delete/export.
+- `HIPPOMEM_TOKENS` adds scoped tokens: `name:token:ns=<prefix>[:admin]`. The token may only access `user_id`s that equal the prefix or start with `prefix:`. Use `ns=*` for every user. Add `:admin` for config/delete.
+- Binding `--host 0.0.0.0` or `::` requires a token (the process exits with code 2 otherwise). Loopback does not.
+
+CORS is always limited to `localhost` / `127.0.0.1` (any port), plus any origins in `HIPPOMEM_CORS_ORIGINS`. That only affects browsers. A local app, `HippoMemClient`, or `curl` is not blocked by CORS.
 
 ---
 
@@ -169,6 +182,11 @@ Set environment variables in `.env` (copy from `.env.example`):
 | `SYSTEM_PROMPT` | No | Built-in default | Base system prompt in daemon mode |
 | `DB_URL` | No | `sqlite:///.hippomem/hippomem.db` | SQLite database path |
 | `VECTOR_DIR` | No | `.hippomem/vectors` | FAISS vector index directory |
+| `HIPPOMEM_API_TOKEN` | No | — | Opt-in admin bearer token for the daemon. Required to bind `0.0.0.0`. |
+| `HIPPOMEM_TOKENS` | No | — | Extra scoped tokens: `name:token:ns=<prefix>[:admin]` |
+| `HIPPOMEM_CORS_ORIGINS` | No | localhost / `127.0.0.1` | Extra browser origins (does not gate `HippoMemClient` / local apps) |
+
+hippomem is **0.x**: breaking changes land in minor versions (0.3 → 0.4). Pin `hippomem~=0.4.0` if you need a stable contract.
 
 For library mode, pass `llm_api_key` and `llm_base_url` directly to `MemoryService`. Everything else can be tuned via `MemoryConfig`:
 

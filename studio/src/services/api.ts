@@ -8,10 +8,41 @@ import type { ConfigResponse, ConfigPatch, ConfigModelsResponse } from '@/types/
 // Empty string → relative URLs → Vite dev proxy handles routing to the backend.
 // Set VITE_API_BASE_URL in .env when deploying (e.g. https://your-api.com).
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+export const DAEMON_TOKEN_KEY = 'hippomem_api_token'
+
+export function getDaemonToken(): string {
+  try {
+    return localStorage.getItem(DAEMON_TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function setDaemonToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(DAEMON_TOKEN_KEY, token)
+    else localStorage.removeItem(DAEMON_TOKEN_KEY)
+  } catch {
+    // ignore quota / private-mode failures
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getDaemonToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 const client = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
+})
+
+client.interceptors.request.use((config) => {
+  const token = getDaemonToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 export const api = {
@@ -33,7 +64,7 @@ export const api = {
 
     fetch(`${baseUrl}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ user_id: userId, message }),
       signal: controller.signal,
     })
@@ -141,13 +172,13 @@ export const api = {
     return response.data.interactions
   },
 
-  getTraceDetail: async (interactionId: string): Promise<InteractionDetail> => {
-    const response = await client.get(`/traces/${interactionId}`)
+  getTraceDetail: async (interactionId: string, userId: string): Promise<InteractionDetail> => {
+    const response = await client.get(`/traces/${interactionId}`, { params: { user_id: userId } })
     return response.data
   },
 
-  getTurnStatus: async (turnId: string): Promise<TurnStatusEntry[]> => {
-    const response = await client.get(`/turn-status/${turnId}`)
+  getTurnStatus: async (turnId: string, userId: string): Promise<TurnStatusEntry[]> => {
+    const response = await client.get(`/turn-status/${turnId}`, { params: { user_id: userId } })
     return response.data
   },
 
@@ -167,10 +198,10 @@ export const api = {
   },
 
   getConfigModels: async (apiKey?: string, baseUrl?: string): Promise<ConfigModelsResponse> => {
-    const params: Record<string, string> = {}
-    if (apiKey) params.api_key = apiKey
-    if (baseUrl) params.base_url = baseUrl
-    const response = await client.get<ConfigModelsResponse>('/config/models', { params })
+    const body: Record<string, string> = {}
+    if (apiKey) body.api_key = apiKey
+    if (baseUrl) body.base_url = baseUrl
+    const response = await client.post<ConfigModelsResponse>('/config/models', body)
     return response.data
   },
 }

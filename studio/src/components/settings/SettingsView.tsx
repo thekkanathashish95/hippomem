@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { ConnectionSection } from './ConnectionSection'
+import { DaemonAuthSection } from './DaemonAuthSection'
 import { FeaturesSection } from './FeaturesSection'
 import { AdvancedSection } from './AdvancedSection'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
@@ -69,6 +70,7 @@ export function SettingsView() {
           </div>
         )}
 
+        <DaemonAuthSection />
         <ConnectionSection />
         <FeaturesSection />
         <AdvancedSection />

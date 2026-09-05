@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { studioError } from '@/lib/errors'
 import { api } from '@/services/api'
 import type { DashboardStats } from '@/types/dashboard'
 
@@ -23,7 +24,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
       console.error('Failed to fetch dashboard stats:', err)
       set({
         isLoading: false,
-        error: 'Failed to load dashboard. Is the hippomem server running?',
+        error: studioError('Failed to load dashboard', err),
       })
     }
   },

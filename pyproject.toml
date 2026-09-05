@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=83.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hippomem"
-version = "0.3.0"
+version = "0.4.0"
 description = "Brain-inspired persistent memory layer for AI applications"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,6 @@ dependencies = [
     "numpy>=1.24.0",
     "pyyaml>=6.0.0",
     "rank-bm25>=0.2.2",
-    "nltk>=3.8.0",
     "json-repair>=0.7.0",
     "aiosqlite>=0.19.0",
     "requests>=2.28.0",

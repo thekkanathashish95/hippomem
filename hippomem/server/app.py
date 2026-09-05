@@ -30,16 +30,22 @@ except ImportError:
     pass
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from hippomem import MemoryConfig, MemoryService
 from hippomem.decoder.schemas import DecodeResult
 from hippomem.models.turn_status import TurnStatus
+from hippomem.server.auth import (
+    context_from_request,
+    require_admin,
+    require_user,
+    tokens_configured,
+)
 from hippomem.server.config_store import load_config_overlay, save_config
 
 logger = logging.getLogger(__name__)
@@ -175,17 +181,36 @@ async def lifespan(app: FastAPI):
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="hippomem", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="hippomem", version="0.4.0", lifespan=lifespan)
 
+_cors_extra = [o.strip() for o in os.environ.get("HIPPOMEM_CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["*"] is acceptable for a localhost-bound daemon; if you
-    # ever expose hippomem on 0.0.0.0 (e.g. in Docker), restrict this to
-    # specific origins to prevent cross-origin requests from arbitrary websites.
-    allow_origins=["*"],
+    allow_origins=_cors_extra,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _bearer_auth(request, call_next):
+    path = request.url.path.lstrip("/")
+    first = path.split("/")[0] if path else ""
+    protected = first in _API_PREFIXES or first == "users"
+    if first == "chat" and request.method == "GET":
+        protected = False
+    if request.method == "OPTIONS" or first in ("health", "assets") or not path:
+        return await call_next(request)
+    try:
+        if protected and tokens_configured():
+            request.state.auth = context_from_request(request)
+        elif protected:
+            from hippomem.server.auth import AuthContext
+            request.state.auth = AuthContext(name="anonymous", namespace="*", is_admin=True)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -283,6 +308,18 @@ class ConfigPatch(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _auth(request: Request):
+    """Auth context set by middleware, or anonymous admin when tokens are unset."""
+    auth = getattr(request.state, "auth", None)
+    if auth is not None:
+        return auth
+    if tokens_configured():
+        return context_from_request(request)
+    from hippomem.server.auth import AuthContext
+
+    return AuthContext(name="anonymous", namespace="*", is_admin=True)
+
+
 def _decode_response_to_result(d: DecodeResponse | None) -> DecodeResult | None:
     if d is None:
         return None
@@ -353,7 +390,8 @@ def _ts_done(session_factory, ts_id: Optional[str]) -> None:
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest) -> StreamingResponse:
+async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
+    require_user(_auth(request), req.user_id)
     if not memory or not llm_client:
         raise HTTPException(status_code=503, detail="Service not ready.")
 
@@ -481,8 +519,9 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
 
 @app.post("/decode", response_model=DecodeResponse)
-async def decode_endpoint(req: DecodeRequest) -> DecodeResponse:
+async def decode_endpoint(req: DecodeRequest, request: Request) -> DecodeResponse:
     """Decode endpoint for HippoMemClient — retrieve memory context before LLM call."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     raw = req.conversation_history or []
@@ -497,8 +536,9 @@ async def decode_endpoint(req: DecodeRequest) -> DecodeResponse:
 
 
 @app.post("/encode", response_model=EncodeResponse)
-async def encode_endpoint(req: EncodeRequest) -> EncodeResponse:
+async def encode_endpoint(req: EncodeRequest, request: Request) -> EncodeResponse:
     """Encode endpoint for HippoMemClient — update memory after LLM response."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     raw = req.conversation_history or []
@@ -516,8 +556,9 @@ async def encode_endpoint(req: EncodeRequest) -> EncodeResponse:
 
 
 @app.post("/consolidate")
-async def consolidate_endpoint(req: ConsolidateRequest) -> dict:
+async def consolidate_endpoint(req: ConsolidateRequest, request: Request) -> dict:
     """Consolidate endpoint for HippoMemClient — run periodic memory maintenance."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     await memory.consolidate(req.user_id)
@@ -525,8 +566,9 @@ async def consolidate_endpoint(req: ConsolidateRequest) -> dict:
 
 
 @app.post("/retrieve")
-async def retrieve_endpoint(req: RetrieveRequest) -> dict:
+async def retrieve_endpoint(req: RetrieveRequest, request: Request) -> dict:
     """Retrieve raw episodes by query. Mode: faiss | bm25 | hybrid."""
+    require_user(_auth(request), req.user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     from hippomem.retrieve.schemas import retrieve_result_to_dict
@@ -549,13 +591,18 @@ async def retrieve_endpoint(req: RetrieveRequest) -> dict:
 
 
 @app.get("/turn-status/{turn_id}")
-async def get_turn_status(turn_id: str) -> list[dict]:
+async def get_turn_status(
+    turn_id: str,
+    request: Request,
+    user_id: str = Query(..., description="Owning user — required to prevent IDOR"),
+) -> list[dict]:
     """Polling fallback for encode/decode status when SSE connection drops."""
+    require_user(_auth(request), user_id)
     if not memory or memory._session_factory is None:
         raise HTTPException(status_code=503, detail="Service not ready.")
     db = memory._get_db()
     try:
-        rows = db.query(TurnStatus).filter_by(turn_id=turn_id).all()
+        rows = db.query(TurnStatus).filter_by(turn_id=turn_id, user_id=user_id).all()
         return [
             {
                 "phase": r.phase,
@@ -571,17 +618,49 @@ async def get_turn_status(turn_id: str) -> list[dict]:
 
 
 @app.get("/messages", response_model=list[MessageOut])
-async def get_messages(user_id: str, session_id: Optional[str] = None, limit: int = 100) -> list[dict]:
+async def get_messages(
+    request: Request,
+    user_id: str,
+    session_id: Optional[str] = None,
+    limit: int = 100,
+) -> list[dict]:
+    require_user(_auth(request), user_id)
     if memory is None:
         return []
     return memory.get_messages(user_id, session_id=session_id, limit=limit)
 
 
 @app.get("/engrams/{engram_id}/turns")
-async def get_turns_for_engram(engram_id: str, user_id: str, limit: int = 50) -> list[dict]:
+async def get_turns_for_engram(
+    engram_id: str, request: Request, user_id: str, limit: int = 50
+) -> list[dict]:
+    require_user(_auth(request), user_id)
     if memory is None:
         raise HTTPException(status_code=503, detail="Memory service not initialized")
     return memory.get_turns_for_engram(user_id, engram_id, limit=limit)
+
+
+@app.delete("/users/{user_id}")
+async def delete_user(user_id: str, request: Request, confirm: bool = False) -> dict:
+    """Erase every store for this user. Admin-only; requires confirm=true."""
+    require_admin(_auth(request))
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to permanently delete all data for this user",
+        )
+    if not memory:
+        raise HTTPException(status_code=503, detail="Service not ready.")
+    return memory.delete_user(user_id)
+
+
+@app.get("/users/{user_id}/export")
+async def export_user(user_id: str, request: Request) -> dict:
+    """Download a JSON snapshot of one user's data (GDPR-style export)."""
+    require_user(_auth(request), user_id)
+    if not memory:
+        raise HTTPException(status_code=503, detail="Service not ready.")
+    return memory.export_user(user_id)
 
 
 @app.get("/health")
@@ -589,8 +668,6 @@ async def health() -> dict:
     return {
         "status": "ok",
         "setup_required": memory is None,
-        "memory_model": app_config.get("llm_model", ""),
-        "chat_model": app_config.get("chat_model", ""),
     }
 
 
@@ -606,15 +683,17 @@ def _config_for_response() -> dict[str, Any]:
 
 
 @app.get("/config")
-async def get_config() -> dict[str, Any]:
+async def get_config(request: Request) -> dict[str, Any]:
     """Return current config with API key masked."""
+    require_admin(_auth(request))
     return _config_for_response()
 
 
 @app.patch("/config")
-async def patch_config(patch: ConfigPatch) -> dict[str, Any]:
+async def patch_config(patch: ConfigPatch, request: Request) -> dict[str, Any]:
     """Apply partial config update. Hot fields apply immediately; warm fields swap clients."""
     global memory, llm_client, app_config
+    require_admin(_auth(request))
 
     # Build patch dict from non-None fields
     patch_dict: dict[str, Any] = {}
@@ -705,18 +784,16 @@ async def patch_config(patch: ConfigPatch) -> dict[str, Any]:
     return {"status": "applied", "config": _config_for_response()}
 
 
-@app.get("/config/models")
-async def get_config_models(api_key: Optional[str] = None, base_url: Optional[str] = None) -> dict[str, Any]:
-    """
-    Proxy GET models from OpenRouter (or base URL). Uses stored key/url unless query params supplied.
-    For validation flow: pass api_key (and optionally base_url) to test before saving.
-    """
-    key = api_key or app_config.get("llm_api_key", "")
-    base_url = (base_url or app_config.get("llm_base_url") or "https://openrouter.ai/api/v1").rstrip("/")
+class ModelsProbe(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
+
+async def _probe_provider_models(key: str, base_url: str) -> dict[str, Any]:
     if not key:
         return {"valid": False, "error": "No API key configured"}
 
+    base_url = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
     models_url = f"{base_url}/models"
     if "openrouter.ai" in base_url:
         models_url = "https://openrouter.ai/api/v1/models"
@@ -748,28 +825,53 @@ async def get_config_models(api_key: Optional[str] = None, base_url: Optional[st
     return {"valid": True, "models": models}
 
 
+@app.get("/config/models")
+async def get_config_models(request: Request) -> dict[str, Any]:
+    """List models using the in-memory/env key — never a query-string secret."""
+    require_admin(_auth(request))
+    key = app_config.get("llm_api_key", "")
+    base_url = app_config.get("llm_base_url") or "https://openrouter.ai/api/v1"
+    return await _probe_provider_models(key, base_url)
+
+
+@app.post("/config/models")
+async def post_config_models(request: Request, body: ModelsProbe | None = None) -> dict[str, Any]:
+    """Probe a provider with a key in the JSON body (not persisted)."""
+    require_admin(_auth(request))
+    key = (body.api_key if body else None) or app_config.get("llm_api_key", "")
+    base_url = (body.base_url if body else None) or app_config.get("llm_base_url") or "https://openrouter.ai/api/v1"
+    return await _probe_provider_models(key, base_url)
+
+
 # ── Inspector (traces + stats) ───────────────────────────────────────────────────
 
 
 @app.get("/traces")
-async def list_traces(user_id: str, limit: int = 50) -> dict:
+async def list_traces(request: Request, user_id: str, limit: int = 50) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     return {"interactions": memory.list_interactions(user_id, limit)}
 
 
 @app.get("/traces/{interaction_id}")
-async def get_trace(interaction_id: str) -> dict:
+async def get_trace(
+    interaction_id: str,
+    request: Request,
+    user_id: str = Query(..., description="Owning user — required to prevent IDOR"),
+) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
-    detail = memory.get_interaction_detail(interaction_id)
+    detail = memory.get_interaction_detail(interaction_id, user_id=user_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Interaction not found")
     return detail
 
 
 @app.get("/stats")
-async def get_stats(user_id: str) -> dict:
+async def get_stats(request: Request, user_id: str) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     return memory.get_stats(user_id)
@@ -779,14 +881,16 @@ async def get_stats(user_id: str) -> dict:
 
 
 @app.get("/memory/graph/{user_id}")
-async def get_memory_graph(user_id: str) -> dict:
+async def get_memory_graph(user_id: str, request: Request) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     return memory.get_graph_for_explorer(user_id)
 
 
 @app.get("/memory/events/{user_id}/{event_uuid}")
-async def get_event_detail(user_id: str, event_uuid: str) -> dict:
+async def get_event_detail(user_id: str, event_uuid: str, request: Request) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     detail = memory.get_event_detail_for_explorer(user_id, event_uuid)
@@ -796,14 +900,16 @@ async def get_event_detail(user_id: str, event_uuid: str) -> dict:
 
 
 @app.get("/memory/self/{user_id}")
-async def get_self_traits(user_id: str) -> dict:
+async def get_self_traits(user_id: str, request: Request) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     return memory.get_self_traits_for_explorer(user_id)
 
 
 @app.get("/memory/entities/{user_id}")
-async def get_entities(user_id: str) -> dict:
+async def get_entities(user_id: str, request: Request) -> dict:
+    require_user(_auth(request), user_id)
     if not memory:
         raise HTTPException(status_code=503, detail="Service not ready.")
     return memory.get_entities_for_explorer(user_id)
@@ -816,8 +922,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Top-level path segments that belong to the API — the SPA catch-all must not
 # swallow requests to these paths and silently return index.html.
 _API_PREFIXES = frozenset({
-    "chat", "decode", "encode", "consolidate",
+    "chat", "decode", "encode", "consolidate", "retrieve",
     "messages", "health", "traces", "stats", "memory", "config", "turn-status",
+    "users", "engrams",
+})
+_SPA_PREFIXES = frozenset({
+    "chat", "memory", "self", "personas", "traces", "settings", "dashboard",
 })
 
 
@@ -847,7 +957,8 @@ def _setup_static_routes(app: FastAPI) -> None:
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         # Return 404 for unknown API paths so typos don't silently serve index.html.
-        if path.split("/")[0] in _API_PREFIXES:
+        first = path.split("/")[0]
+        if first in _API_PREFIXES and first not in _SPA_PREFIXES:
             raise HTTPException(status_code=404, detail="Not found")
         # SPA fallback: serve the file if it exists, otherwise serve index.html.
         full_path = STATIC_DIR / path
