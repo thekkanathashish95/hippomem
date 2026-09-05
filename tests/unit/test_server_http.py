@@ -94,7 +94,10 @@ def test_decode_encode_with_mocked_service(client):
 
 @pytest.mark.asyncio
 async def test_hippomem_client_maps_decode_and_encode():
+    seen: dict[str, str | None] = {}
+
     async def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
         if request.url.path == "/decode":
             return httpx.Response(
                 200,
@@ -109,15 +112,28 @@ async def test_hippomem_client_maps_decode_and_encode():
             )
         if request.url.path == "/encode":
             return httpx.Response(200, json={"status": "ok", "turn_id": "turn-1"})
+        if request.url.path == "/users/u1/export":
+            return httpx.Response(200, json={"schema_version": 1, "user_id": "u1", "engrams": []})
+        if request.url.path == "/users/u1":
+            return httpx.Response(200, json={"engrams": 0, "faiss_index": 0})
         return httpx.Response(404)
 
-    mem = HippoMemClient("http://test")
+    mem = HippoMemClient("http://test", token="test-token")
     await mem.aclose()
-    mem._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://test")
+    mem._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-token"},
+    )
     try:
         got = await mem.decode("u1", "what was I doing?")
         assert got.turn_id == "turn-1"
         encoded = await mem.encode("u1", "q", "a", decode_result=got)
         assert encoded.turn_id == "turn-1"
+        exported = await mem.export_user("u1")
+        assert exported["schema_version"] == 1
+        deleted = await mem.delete_user("u1", confirm=True)
+        assert "engrams" in deleted
+        assert seen["auth"] == "Bearer test-token"
     finally:
         await mem.aclose()
