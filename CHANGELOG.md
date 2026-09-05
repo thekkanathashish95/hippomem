@@ -30,6 +30,7 @@ Trust-foundation release. The daemon is no longer an open localhost API by defau
 ### Fixed
 - `Dict` was used without import in `consolidator/service.py` (runtime `NameError` on the persona-summary path).
 - Unused `compute_content_hash` import in the same module.
+- CI upgrades `setuptools` to `>=83.0` so blocking pip-audit is not failed by the runner's preinstalled 79.x (PYSEC-2026-3447).
 
 ---
 

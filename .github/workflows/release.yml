@@ -25,7 +25,7 @@ jobs:
 
       - name: Build
         run: |
-          python -m pip install -U pip build
+          python -m pip install -U pip "setuptools>=83.0" build
           python -m build
 
       - uses: actions/upload-artifact@v4
