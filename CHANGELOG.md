@@ -4,10 +4,28 @@ All notable changes to hippomem are documented here.
 
 ---
 
-## [Unreleased]
+## [0.4.0] - 2026-09-05
+
+Trust-foundation release. The daemon is no longer an open localhost API by default once you set a token.
+
+### Breaking
+- `GET /traces/{id}` and `GET /turn-status/{id}` require a `user_id` query parameter and return only that user's rows.
+- `GET /config/models` no longer accepts `api_key` / `base_url` query parameters. Probe a key with `POST /config/models` and a JSON body.
+- LLM API keys are never written to `hippomem_config.json`. They live in `LLM_API_KEY` or `secrets.json` (mode `0600`).
+- Inspector call logs no longer store raw prompts/responses by default (`store_raw_llm_prompts=False`). Old traces may still contain prompts until TTL prune (`inspector_ttl_days`, default 7).
+- NLTK is removed. BM25 tokenization uses a built-in stopword list and **does not stem**. Retrieval scores can shift vs 0.3.0.
+- `hippomem serve --host 0.0.0.0` (or `::`) exits with code 2 unless `HIPPOMEM_API_TOKEN` or `HIPPOMEM_TOKENS` is set.
+- CORS is limited to localhost / `127.0.0.1` plus `HIPPOMEM_CORS_ORIGINS` (no `*`).
+- Studio Dashboard lives at `/dashboard`. `/` redirects there.
 
 ### Added
-- GitHub Actions CI on Python 3.11 and 3.12: pytest, ruff, bandit. `pip-audit` runs but does not fail the build yet (NLTK advisory).
+- Optional scoped bearer auth: `HIPPOMEM_API_TOKEN` (admin, all users) and `HIPPOMEM_TOKENS=name:token:ns=<prefix>[:admin]`.
+- `DELETE /users/{id}?confirm=true` (admin) and `GET /users/{id}/export` (`schema_version: 1`).
+- `MemoryService.delete_user` / `export_user` and matching `HippoMemClient` methods.
+- `HippoMemClient(..., token=)` (or `HIPPOMEM_API_TOKEN`).
+- Per-user lock around encode, consolidate, and delete so concurrent writes cannot corrupt a FAISS index.
+- Studio: daemon token field (browser `localStorage`), `/dashboard` route, clearer errors when the key or token is missing.
+- GitHub Actions CI (pytest, ruff, bandit, blocking pip-audit) and tag-triggered PyPI release (`v*`).
 
 ### Fixed
 - `Dict` was used without import in `consolidator/service.py` (runtime `NameError` on the persona-summary path).
@@ -52,7 +70,7 @@ All notable changes to hippomem are documented here.
 
 ### Added
 - Initial release: core memory encode/decode pipeline
-- C1/C2/C3 retrieval cascade (continuation check → synthesis → context building)
+- C1/C2/C3 retrieval cascade (continuation check → local scan → long-term retrieval)
 - SQLite-backed event store and working state
 - FAISS vector index
 - `MemoryService` public API: `decode()`, `encode()`, `consolidate()`, `retrieve()`

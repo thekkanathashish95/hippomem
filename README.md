@@ -18,7 +18,7 @@ This is the first step toward that vision. Today, hippomem gives individual AI a
 - **Entity memory** — people, pets, and organizations the user mentions
 - **Self memory** — stable traits and facts about the user (e.g. job, location, habits)
 
-All stored locally in SQLite + FAISS. No data leaves your machine.
+Memories are stored locally in SQLite + FAISS. **This is local-first, not air-gapped:** decode, encode, and consolidation send prompts to your configured LLM provider. Treat retrieved context as untrusted user data — it can contain whatever was said in past conversations.
 
 hippomem does not try to remember everything. Unlike a fact store or a rolling message log, it is modeled on how human memory actually works: selective, lossy, and shaped by relevance. Memories that are used get reinforced; memories that go untouched decay. The hypothesis hippomem is built on is that this lossiness is not a weakness — it is what makes memory useful. A system that forgets selectively surfaces what matters, rather than drowning every response in accumulated context.
 
@@ -92,12 +92,14 @@ Use `HippoMemClient` to connect from any application:
 ```python
 from hippomem.client import HippoMemClient
 
-async with HippoMemClient("http://localhost:8719") as mem:
+async with HippoMemClient("http://localhost:8719", token="your-daemon-token") as mem:
     result = await mem.decode("user_123", "What was I working on?")
     # inject result.context into your LLM system prompt
     response = await your_llm(system=result.context, message=user_message)
     await mem.encode("user_123", user_message, response, decode_result=result)
 ```
+
+`token` can also come from `HIPPOMEM_API_TOKEN`. Local-dev with no tokens configured still accepts unauthenticated calls.
 
 `HippoMemClient` is included in the standard `pip install hippomem`.
 
@@ -170,6 +172,11 @@ Set environment variables in `.env` (copy from `.env.example`):
 | `SYSTEM_PROMPT` | No | Built-in default | Base system prompt in daemon mode |
 | `DB_URL` | No | `sqlite:///.hippomem/hippomem.db` | SQLite database path |
 | `VECTOR_DIR` | No | `.hippomem/vectors` | FAISS vector index directory |
+| `HIPPOMEM_API_TOKEN` | No | — | Admin bearer token for the daemon. Required to bind `0.0.0.0`. |
+| `HIPPOMEM_TOKENS` | No | — | Extra tokens: `name:token:ns=<prefix>[:admin]` |
+| `HIPPOMEM_CORS_ORIGINS` | No | localhost only | Extra allowed CORS origins |
+
+hippomem is **0.x**: breaking changes land in minor versions (0.3 → 0.4). Pin `hippomem~=0.4.0` if you need a stable contract.
 
 For library mode, pass `llm_api_key` and `llm_base_url` directly to `MemoryService`. Everything else can be tuned via `MemoryConfig`:
 
