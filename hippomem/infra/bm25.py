@@ -25,62 +25,33 @@ class BM25Retriever:
     The BM25Okapi index is cached per user_id and rebuilt after TTL expiry.
     """
 
-    # Lazy-loaded NLTK resources — class-level so one copy lives per process
+    # Built-in English stopwords — NLTK is not a dependency.
     _stop_words: Optional[set] = None
-    _stemmer: Optional[Any] = None
 
     def __init__(self) -> None:
         # user_id -> (BM25Okapi, corpus_ids: List[str], built_at: float)
         self._cache: Dict[str, Tuple[Any, List[str], float]] = {}
 
-    # ── NLTK lazy loaders ────────────────────────────────────────────────────
-
     @classmethod
     def _get_stop_words(cls) -> set:
         if cls._stop_words is None:
-            try:
-                from nltk.corpus import stopwords
-                cls._stop_words = set(stopwords.words("english"))
-            except LookupError:
-                # NLTK stopwords not downloaded — use built-in fallback.
-                # Run `python -m nltk.downloader stopwords` once to enable full list.
-                logger.debug("NLTK stopwords not downloaded, using built-in fallback")
-                cls._stop_words = {
-                    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
-                    "for", "of", "with", "by", "is", "are", "was", "were", "be",
-                    "been", "being", "have", "has", "had", "do", "does", "did",
-                    "will", "would", "could", "should", "may", "might", "must",
-                    "can", "this", "that", "these", "those", "i", "you", "he", "she",
-                    "it", "we", "they", "my", "your", "his", "her", "its", "our",
-                    "their",
-                }
+            cls._stop_words = {
+                "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
+                "for", "of", "with", "by", "is", "are", "was", "were", "be",
+                "been", "being", "have", "has", "had", "do", "does", "did",
+                "will", "would", "could", "should", "may", "might", "must",
+                "can", "this", "that", "these", "those", "i", "you", "he", "she",
+                "it", "we", "they", "my", "your", "his", "her", "its", "our",
+                "their",
+            }
         return cls._stop_words
 
-    @classmethod
-    def _get_stemmer(cls) -> Any:
-        if cls._stemmer is None:
-            from nltk.stem import PorterStemmer
-            cls._stemmer = PorterStemmer()
-        return cls._stemmer
-
-    # ── Tokenizer ────────────────────────────────────────────────────────────
-
     def _tokenize(self, text: str) -> List[str]:
-        """Lowercase → word tokens → stopword removal → Porter stemming."""
+        """Lowercase → word tokens → stopword removal. No stemmer (NLTK dropped)."""
         text = text.lower()
         tokens = re.findall(r"\b[a-z0-9]+\b", text)
         stop_words = self._get_stop_words()
-        stemmer = self._get_stemmer()
-        result = []
-        for token in tokens:
-            if token not in stop_words and len(token) > 1:
-                try:
-                    stemmed = stemmer.stem(token)
-                except Exception:
-                    stemmed = token
-                if stemmed and stemmed not in stop_words:
-                    result.append(stemmed)
-        return result
+        return [t for t in tokens if t not in stop_words and len(t) > 1]
 
     # ── Index build ──────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-# Wave 1.1 — keep main green. pip-audit is informational until NLTK is removed.
+# CI — pytest, ruff, bandit, and blocking pip-audit on 3.11/3.12.
 name: CI
 
 on:
@@ -39,6 +39,5 @@ jobs:
       - name: Bandit
         run: bandit -r hippomem -ll
 
-      - name: pip-audit (non-blocking until NLTK is dropped)
-        continue-on-error: true
+      - name: pip-audit
         run: pip-audit
