@@ -99,9 +99,19 @@ async with HippoMemClient("http://localhost:8719", token="your-daemon-token") as
     await mem.encode("user_123", user_message, response, decode_result=result)
 ```
 
-`token` can also come from `HIPPOMEM_API_TOKEN`. Local-dev with no tokens configured still accepts unauthenticated calls.
+`token` is optional. You can omit it, or let `HippoMemClient` read `HIPPOMEM_API_TOKEN`. `HippoMemClient` is included in the standard `pip install hippomem`.
 
-`HippoMemClient` is included in the standard `pip install hippomem`.
+### Daemon auth (optional)
+
+Tokens are an opt-in layer for the HTTP daemon only. In-process library mode (`MemoryService`) does not use them. You create the strings yourself in `.env` — hippomem does not issue tokens.
+
+- If neither `HIPPOMEM_API_TOKEN` nor `HIPPOMEM_TOKENS` is set, the daemon accepts unauthenticated calls (normal local-dev on `127.0.0.1`).
+- Once either is set, protected API routes require `Authorization: Bearer <token>`. `/health` and Studio static assets stay public.
+- `HIPPOMEM_API_TOKEN` is a single admin token: every `user_id`, plus config writes and user delete/export.
+- `HIPPOMEM_TOKENS` adds scoped tokens: `name:token:ns=<prefix>[:admin]`. The token may only access `user_id`s that equal the prefix or start with `prefix:`. Use `ns=*` for every user. Add `:admin` for config/delete.
+- Binding `--host 0.0.0.0` or `::` requires a token (the process exits with code 2 otherwise). Loopback does not.
+
+CORS is always limited to `localhost` / `127.0.0.1` (any port), plus any origins in `HIPPOMEM_CORS_ORIGINS`. That only affects browsers. A local app, `HippoMemClient`, or `curl` is not blocked by CORS.
 
 ---
 
@@ -172,9 +182,9 @@ Set environment variables in `.env` (copy from `.env.example`):
 | `SYSTEM_PROMPT` | No | Built-in default | Base system prompt in daemon mode |
 | `DB_URL` | No | `sqlite:///.hippomem/hippomem.db` | SQLite database path |
 | `VECTOR_DIR` | No | `.hippomem/vectors` | FAISS vector index directory |
-| `HIPPOMEM_API_TOKEN` | No | — | Admin bearer token for the daemon. Required to bind `0.0.0.0`. |
-| `HIPPOMEM_TOKENS` | No | — | Extra tokens: `name:token:ns=<prefix>[:admin]` |
-| `HIPPOMEM_CORS_ORIGINS` | No | localhost only | Extra allowed CORS origins |
+| `HIPPOMEM_API_TOKEN` | No | — | Opt-in admin bearer token for the daemon. Required to bind `0.0.0.0`. |
+| `HIPPOMEM_TOKENS` | No | — | Extra scoped tokens: `name:token:ns=<prefix>[:admin]` |
+| `HIPPOMEM_CORS_ORIGINS` | No | localhost / `127.0.0.1` | Extra browser origins (does not gate `HippoMemClient` / local apps) |
 
 hippomem is **0.x**: breaking changes land in minor versions (0.3 → 0.4). Pin `hippomem~=0.4.0` if you need a stable contract.
 
