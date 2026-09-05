@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="hippomem", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="hippomem", version="0.4.0", lifespan=lifespan)
 
 _cors_extra = [o.strip() for o in os.environ.get("HIPPOMEM_CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
