@@ -20,6 +20,7 @@ Usage::
 
 Requires: pip install hippomem
 """
+import os
 from typing import Optional
 
 from hippomem.decoder.schemas import DecodeResult
@@ -47,10 +48,19 @@ class HippoMemClient:
     httpx.AsyncClient — use as a context manager or call aclose() when done.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8719", timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8719",
+        timeout: float = 30.0,
+        token: Optional[str] = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        token = token if token is not None else os.environ.get("HIPPOMEM_API_TOKEN")
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         httpx = _get_httpx()
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout, headers=headers)
 
     async def aclose(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -167,6 +177,18 @@ class HippoMemClient:
         r.raise_for_status()
         data = r.json()
         return _dict_to_retrieve_result(data)
+
+    async def delete_user(self, user_id: str, *, confirm: bool = False) -> dict:
+        """Admin-only: erase every store for this user. DELETE /users/{id}."""
+        r = await self._client.delete(f"/users/{user_id}", params={"confirm": str(confirm).lower()})
+        r.raise_for_status()
+        return r.json()
+
+    async def export_user(self, user_id: str) -> dict:
+        """Download a versioned JSON snapshot. GET /users/{id}/export."""
+        r = await self._client.get(f"/users/{user_id}/export")
+        r.raise_for_status()
+        return r.json()
 
 
 def _dict_to_entity(d: dict) -> RetrievedEntity:

@@ -8,6 +8,7 @@ Three-line integration:
 """
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -43,6 +44,7 @@ from hippomem.models.self_trait import SelfTrait  # noqa: F401 — registers tab
 from hippomem.models.turn_status import TurnStatus  # noqa: F401 — registers table
 from hippomem.models.conversation_turn import ConversationTurn
 from hippomem.models.conversation_turn_engram import ConversationTurnEngram
+from hippomem.models.llm_interaction import LLMCallLog, LLMInteraction  # noqa: F401 — registers tables
 from hippomem import explorer, sessions
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,16 @@ class MemoryService:
         # Maps (user_id, session_id) → (turn_id, used_engram_ids) for Tier 2 resolution.
         # Bounded to _DECODE_CACHE_MAX entries; oldest key evicted on overflow.
         self._last_decode_cache: OrderedDict[Tuple[str, Optional[str]], Tuple[str, List[str]]] = OrderedDict()
+        self._user_locks: Dict[str, threading.Lock] = {}
+        self._user_locks_guard = threading.Lock()
+
+    def _lock_for_user(self, user_id: str) -> threading.Lock:
+        with self._user_locks_guard:
+            lock = self._user_locks.get(user_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._user_locks[user_id] = lock
+            return lock
 
     def update_llm_config(
         self,
@@ -277,6 +289,10 @@ class MemoryService:
             logger.error("consolidate() failed for user %s: %s", user_id, e)
 
     def _consolidate_sync(self, user_id: str) -> None:
+        with self._lock_for_user(user_id):
+            self._consolidate_sync_unlocked(user_id)
+
+    def _consolidate_sync_unlocked(self, user_id: str) -> None:
         from hippomem.consolidator.service import consolidate_user
         from hippomem.infra.call_collector import _current_collector, LLMCallCollector
 
@@ -578,6 +594,24 @@ class MemoryService:
         turn_id: str = "",
         on_step: Optional[Callable[[str], None]] = None,
     ) -> None:
+        with self._lock_for_user(user_id):
+            self._encode_sync_unlocked(
+                user_id, session_id, conversation_history, used_engram_ids,
+                reasoning, synthesized_context, used_entity_ids, turn_id, on_step,
+            )
+
+    def _encode_sync_unlocked(
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        conversation_history: List[Tuple[str, str]],
+        used_engram_ids: List[str],
+        reasoning: str,
+        synthesized_context: str,
+        used_entity_ids: List[str],
+        turn_id: str = "",
+        on_step: Optional[Callable[[str], None]] = None,
+    ) -> None:
         from hippomem.infra.call_collector import _current_collector, LLMCallCollector
         from hippomem.models.llm_interaction import LLMInteraction
 
@@ -857,13 +891,43 @@ class MemoryService:
         finally:
             db.close()
 
-    def get_interaction_detail(self, interaction_id: str) -> Optional[dict]:
+    def get_interaction_detail(
+        self, interaction_id: str, user_id: Optional[str] = None
+    ) -> Optional[dict]:
         """Return full interaction detail with call logs for the Inspector."""
         db = self._get_db()
         try:
             from hippomem import inspector
 
-            return inspector.get_interaction_detail(interaction_id, db)
+            return inspector.get_interaction_detail(interaction_id, db, user_id=user_id)
+        finally:
+            db.close()
+
+    def delete_user(self, user_id: str) -> dict:
+        """Purge all stored memory, traces, and the FAISS index for a user."""
+        from hippomem.privacy import delete_user_data
+
+        with self._lock_for_user(user_id):
+            for key in list(self._last_decode_cache):
+                if key[0] == user_id:
+                    self._last_decode_cache.pop(key, None)
+            bm25 = getattr(self._retrieve_svc, "_bm25", None)
+            invalidate = bm25.invalidate if bm25 is not None else None
+            db = self._get_db()
+            try:
+                return delete_user_data(
+                    user_id, db, self.config.vector_dir, bm25_invalidate=invalidate
+                )
+            finally:
+                db.close()
+
+    def export_user(self, user_id: str) -> dict:
+        """Export a user's memories as a versioned JSON document."""
+        from hippomem.privacy import export_user_data
+
+        db = self._get_db()
+        try:
+            return export_user_data(user_id, db)
         finally:
             db.close()
 
@@ -909,6 +973,7 @@ class MemoryService:
             )
             db.add(interaction)
             db.flush()
+            store_raw = getattr(self.config, "store_raw_llm_prompts", False)
             for record in collector.records:
                 db.add(
                     LLMCallLog(
@@ -917,8 +982,8 @@ class MemoryService:
                         user_id=user_id,
                         op=record.op,
                         model=record.model,
-                        messages=record.messages,
-                        raw_response=record.raw_response,
+                        messages=record.messages if store_raw else [],
+                        raw_response=record.raw_response if store_raw else "",
                         input_tokens=record.input_tokens,
                         output_tokens=record.output_tokens,
                         cost=record.cost,
@@ -927,15 +992,21 @@ class MemoryService:
                     )
                 )
             db.commit()
+            ttl = getattr(self.config, "inspector_ttl_days", 7)
+            if ttl:
+                from hippomem.privacy import prune_inspector_logs
+                prune_inspector_logs(db, ttl)
         except Exception as e:
             logger.error("_persist_interaction failed: %s", e)
             db.rollback()
 
-    def get_interaction_by_turn_id(self, turn_id: str) -> Optional[dict]:
+    def get_interaction_by_turn_id(
+        self, turn_id: str, user_id: Optional[str] = None
+    ) -> Optional[dict]:
         """Return all interaction detail rows that share the given turn_id."""
         db = self._get_db()
         try:
             from hippomem import inspector
-            return inspector.get_by_turn_id(turn_id, db)
+            return inspector.get_by_turn_id(turn_id, db, user_id=user_id)
         finally:
             db.close()

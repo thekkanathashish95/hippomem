@@ -55,12 +55,15 @@ def list_interactions(user_id: str, db: Session, limit: int = 50) -> list[dict]:
 
 
 def get_interaction_detail(
-    interaction_id: str, db: Session
+    interaction_id: str, db: Session, user_id: Optional[str] = None
 ) -> Optional[dict]:
     """
     Return interaction header + ordered call logs (prompts + responses).
     """
-    interaction = db.query(LLMInteraction).filter_by(id=interaction_id).first()
+    q = db.query(LLMInteraction).filter_by(id=interaction_id)
+    if user_id is not None:
+        q = q.filter_by(user_id=user_id)
+    interaction = q.first()
     if not interaction:
         return None
     calls = (
@@ -75,16 +78,14 @@ def get_interaction_detail(
     }
 
 
-def get_by_turn_id(turn_id: str, db: Session) -> Optional[dict]:
+def get_by_turn_id(turn_id: str, db: Session, user_id: Optional[str] = None) -> Optional[dict]:
     """
     Return all interaction rows sharing a turn_id (decode + encode pair).
     """
-    rows = (
-        db.query(LLMInteraction)
-        .filter(LLMInteraction.turn_id == turn_id)
-        .order_by(LLMInteraction.created_at)
-        .all()
-    )
+    q = db.query(LLMInteraction).filter(LLMInteraction.turn_id == turn_id)
+    if user_id is not None:
+        q = q.filter(LLMInteraction.user_id == user_id)
+    rows = q.order_by(LLMInteraction.created_at).all()
     if not rows:
         return None
     interactions = []
